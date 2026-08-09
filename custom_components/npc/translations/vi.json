@@ -1,0 +1,110 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "⚡ Thiết lập EVN Việt Nam",
+        "data": {
+          "phuong_thuc": "🛠️ Phương thức thiết lập"
+        },
+        "data_description": {
+          "phuong_thuc": "Chọn cách thêm mã khách hàng EVN"
+        },
+        "description": "### 🔌 Cấu hình EVN VN\n\nChọn khu vực điện lực của bạn:\n- **HN**: Hà Nội\n- **NPC**: Miền Bắc\n- **CPC**: Miền Trung\n- **SPC**: Miền Nam"
+      },
+      "credentials": {
+        "title": "🔐 Thông tin đăng nhập",
+        "data": {
+          "username": "👤 Tên đăng nhập",
+          "password": "🔒 Mật khẩu"
+        },
+        "data_description": {
+          "username": "Nhập tên đăng nhập để đăng nhập vào hệ thống EVN",
+          "password": "Nhập mật khẩu để đăng nhập vào hệ thống EVN"
+        },
+        "description": "### 🔐 Thông tin đăng nhập\n\nNhập username và password để đăng nhập vào hệ thống EVN."
+      },
+      "customer_id": {
+        "title": "📋 Thông tin tài khoản",
+        "data": {
+          "customer_id": "🆔 Mã khách hàng",
+          "ngaydauky": "📅 Ngày đầu kỳ hóa đơn"
+        },
+        "data_description": {
+          "customer_id": "Nhập mã khách hàng EVN (bắt đầu bằng P hoặc S, tối thiểu 11 ký tự)",
+          "ngaydauky": "Chọn ngày bắt đầu chu kỳ thanh toán (thường là ngày 1-28)"
+        },
+        "description": "### 📋 Thông tin tài khoản\n\nNhập mã khách hàng và ngày đầu kỳ thanh toán."
+      },      "auto": {
+        "title": "🤖 Thiết lập Tự Động",
+        "data": {
+          "username": "🆔 Mã khách hàng EVN",
+          "ngaydauky": "📅 Ngày đầu kỳ hóa đơn"
+        },
+        "data_description": {
+          "username": "Chọn mã khách hàng từ danh sách có sẵn",
+          "ngaydauky": "Chọn ngày bắt đầu chu kỳ thanh toán (thường là ngày 1-28)"
+        },
+        "description": "### 🤖 Thiết lập Tự Động\n\n✅ Đã tìm thấy dữ liệu từ EVN VN Addon\n📊 Nguồn dữ liệu: EVN VN Addon Database\n🔄 Đồng bộ: Tự động cập nhật từ addon\n\n**Chọn mã khách hàng và ngày đầu kỳ:**"
+      },
+      "manual": {
+        "title": "✏️ Thiết lập Thủ Công",
+        "data": {
+          "username": "🆔 Mã khách hàng EVN",
+          "ngaydauky": "📅 Ngày đầu kỳ hóa đơn"
+        },
+        "data_description": {
+          "username": "Nhập mã khách hàng ghi trên hóa đơn điện của bạn",
+          "ngaydauky": "Chọn ngày bắt đầu chu kỳ thanh toán (thường là ngày 1-28)"
+        },        "description": "### ✏️ Thiết lập Thủ Công\n\n📝 **Nhập mã khách hàng EVN**\n🔍 **Format**: Bắt đầu bằng P hoặc S, tối thiểu 11 ký tự\n💫 **Smart Preview**: Dữ liệu sẽ hiển thị sau khi validation thành công\n\n**Nhập thông tin:**"
+      },
+      "preview_auto": {
+        "title": "📊 Preview - Auto Mode",
+        "data": {
+          "confirm": "✅ Xác nhận tạo sensor",
+          "back": "🔙 Quay lại chỉnh sửa"
+        },
+        "data_description": {
+          "confirm": "Tạo sensor với dữ liệu đã xem trước",
+          "back": "Quay lại để chọn lại mã khách hàng hoặc ngày đầu kỳ"
+        },
+        "description": "{preview_info}"
+      },
+      "preview_manual": {
+        "title": "📊 Preview - Manual Mode", 
+        "data": {
+          "confirm": "✅ Xác nhận tạo sensor",
+          "back": "🔙 Quay lại chỉnh sửa"
+        },
+        "data_description": {
+          "confirm": "Tạo sensor với dữ liệu đã xem trước",
+          "back": "Quay lại để sửa lại mã khách hàng hoặc ngày đầu kỳ"
+        },
+        "description": "{preview_info}"
+      }
+    },
+    "abort": {
+      "already_configured": "🔄 Mã khách hàng đã được thiết lập!\n\n✅ **Mã khách hàng `{title}` đã tồn tại trong hệ thống**\n\n🎯 **Các lựa chọn của bạn:**\n• **Sửa cài đặt**: Vào *Cấu hình* → *Thiết lập lại ngày đầu kỳ*\n• **Xóa và tạo lại**: Xóa mã khách hàng cũ trước khi thêm mới\n• **Sử dụng mã khác**: Nhập mã khách hàng khác\n\n💡 *Mỗi mã khách hàng chỉ có thể được cấu hình một lần*"
+    },
+    "error": {
+      "invalid_evn_code": "❌ Mã khách hàng không hợp lệ!\n\n✅ Định dạng đúng:\n• Bắt đầu bằng P hoặc S\n• Có ít nhất 11 ký tự\n• Ví dụ: PE06800012345",
+      "customer_not_found": "🔍 Mã khách hàng không tồn tại!\n\n❗ Lý do có thể:\n• Nhập sai mã khách hàng của tài khoản\n• Addon EVN VN chạy lỗi\n• Addon EVN VN chưa lấy xong dữ liệu\n\n💬 Vui lòng kiểm tra lại hoặc liên hệ admin",
+      "invalid_format": "❌ Mã khách hàng không hợp lệ!\n\n✅ Định dạng đúng:\n• Bắt đầu bằng P hoặc S\n• Có ít nhất 11 ký tự\n• Ví dụ: PE06800012345",
+      "invalid_auth": "❌ Đăng nhập thất bại!\n\n❗ Vui lòng kiểm tra lại:\n• Tên đăng nhập\n• Mật khẩu\n• Kết nối mạng",
+      "no_data": "⚠️ Không thể lấy dữ liệu!\n\n❗ Có thể do:\n• Mã khách hàng không đúng\n• Chưa có dữ liệu trong hệ thống\n• Lỗi kết nối API",
+      "unknown": "❌ Đã xảy ra lỗi không xác định!\n\n💬 Vui lòng thử lại hoặc kiểm tra logs để biết thêm chi tiết"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "⚙️ Cài đặt EVN",
+        "data": {
+          "ngaydauky": "📅 Ngày đầu kỳ hóa đơn"
+        },
+        "data_description": {
+          "ngaydauky": "Điều chỉnh ngày bắt đầu chu kỳ thanh toán"
+        }
+      }
+    }
+  }
+}
