@@ -58,15 +58,12 @@ canvas {
     image-rendering: auto;
     -webkit-backface-visibility: hidden;
     backface-visibility: hidden;
-    -webkit-transform: translateZ(0);
-    transform: translateZ(0);
 }
 
 /* Tối ưu container của biểu đồ */
 .chart-container {
     will-change: auto;
-    transform: translateZ(0);
-    backface-visibility: hidden;
+backface-visibility: hidden;
 }
 
 /* Ngăn chặn flicker khi hover chart */
