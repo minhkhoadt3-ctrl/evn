@@ -41,7 +41,7 @@ class EVNStaticView(HomeAssistantView):
 
     url = "/npc-monitor/{filename:.*}"
     name = "npc_monitor:static"
-    requires_auth = True
+    requires_auth = False
 
     def __init__(self, webui_path: str, hass=None):
         """Initialize the static file server.

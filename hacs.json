@@ -1,6 +1,6 @@
 {
-  "name": "EVN VN F",
+  "name": "EVN VN",
   "country": ["VN"],
-  "homeassistant": "2026.5.1",
+  "homeassistant": "2024.1.0",
   "hacs": "1.0.0"
 }

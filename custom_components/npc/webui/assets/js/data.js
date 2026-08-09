@@ -1,4 +1,33 @@
 // Data Management Module
+// Get the current Home Assistant access token for API requests.
+function getHAAuthHeaders() {
+    let token = null;
+    try {
+        const ha = window.parent?.document?.querySelector("home-assistant");
+        token = ha?.hass?.auth?.data?.access_token || null;
+    } catch (error) {
+        // Fall back to localStorage below.
+    }
+    if (!token) {
+        try {
+            const raw = window.localStorage.getItem("hassTokens");
+            if (raw) {
+                token = JSON.parse(raw)?.access_token || null;
+            }
+        } catch (error) {
+            // Ignore unavailable or malformed token storage.
+        }
+    }
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function haFetch(url, options = {}) {
+    return fetch(url, {
+        ...options,
+        headers: { ...getHAAuthHeaders(), ...(options.headers || {}) }
+    });
+}
+
 class DataManager {
     constructor() {
         this.monthlyData = null;
@@ -25,7 +54,7 @@ class DataManager {
     async loadAccounts() {
         try {
             const baseUrl = this.getBaseUrl();
-            const response = await fetch(baseUrl + '/api/npc/options');
+            const response = await haFetch(baseUrl + '/api/npc/options');
 
             if (!response.ok) {
                 throw new Error('Không thể tải danh sách tài khoản từ API');
@@ -79,7 +108,7 @@ class DataManager {
             const baseUrl = this.getBaseUrl();
 
             // Load monthly data
-            const monthlyResponse = await fetch(`${baseUrl}/api/npc/monthly/${account}`);
+            const monthlyResponse = await haFetch(`${baseUrl}/api/npc/monthly/${account}`);
             if (!monthlyResponse.ok) {
                 throw new Error(`Không thể tải dữ liệu hóa đơn cho ${account}`);
             }
@@ -87,7 +116,7 @@ class DataManager {
             console.log('📊 Monthly data loaded:', this.monthlyData);
 
             // Load daily data
-            const dailyResponse = await fetch(`${baseUrl}/api/npc/daily/${account}`);
+            const dailyResponse = await haFetch(`${baseUrl}/api/npc/daily/${account}`);
             if (!dailyResponse.ok) {
                 throw new Error(`Không thể tải dữ liệu tiêu thụ cho ${account}`);
             }
@@ -96,7 +125,7 @@ class DataManager {
 
             // Load current period data from sensors
             try {
-                const currentResponse = await fetch(`${baseUrl}/api/npc/current/${account}`);
+                const currentResponse = await haFetch(`${baseUrl}/api/npc/current/${account}`);
                 if (currentResponse.ok) {
                     this.currentPeriodFromSensor = await currentResponse.json();
                     console.log('⚡ Current period from sensor:', this.currentPeriodFromSensor);
@@ -146,9 +175,9 @@ class DataManager {
                 const id = acc.customer_id;
                 try {
                     const [monthlyRes, dailyRes, currentRes] = await Promise.all([
-                        fetch(`${baseUrl}/api/npc/monthly/${id}`),
-                        fetch(`${baseUrl}/api/npc/daily/${id}`),
-                        fetch(`${baseUrl}/api/npc/current/${id}`)
+                        haFetch(`${baseUrl}/api/npc/monthly/${id}`),
+                        haFetch(`${baseUrl}/api/npc/daily/${id}`),
+                        haFetch(`${baseUrl}/api/npc/current/${id}`)
                     ]);
 
                     return {
