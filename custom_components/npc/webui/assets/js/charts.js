@@ -255,7 +255,7 @@ class ChartManager {
                 },
                 maintainAspectRatio: false,
             // Render canvas at physical screen resolution; cap for mobile performance.
-            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 3),
                 responsive: true,
                 onClick: onClickCallback
             },
@@ -400,7 +400,7 @@ class ChartManager {
                 },
                 maintainAspectRatio: false,
             // Render canvas at physical screen resolution; cap for mobile performance.
-            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 3),
                 responsive: true
             }
         });
@@ -588,7 +588,7 @@ class ChartManager {
                 responsive: true,
                 maintainAspectRatio: false,
             // Render canvas at physical screen resolution; cap for mobile performance.
-            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 3),
                 categoryPercentage: 0.85, // Increase space between months
                 barPercentage: 0.9,
                 interaction: {
