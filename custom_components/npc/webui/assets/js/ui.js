@@ -380,32 +380,8 @@ class UIManager {
         }
     }
 
-    // Setup SVG background animation
-    setupAnimations() {
-        this.animateSVGBackground();
-    }
-
-    // Animate SVG Background
-    animateSVGBackground() {
-        const c1 = document.getElementById('bg-c1');
-        const c2 = document.getElementById('bg-c2');
-        const e1 = document.getElementById('bg-e1');
-
-        if (!c1 || !c2 || !e1) return;
-
-        let t = 0;
-        const loop = () => {
-            t += 0.008;
-            c1.setAttribute('cx', 400 + Math.sin(t) * 60);
-            c1.setAttribute('cy', 300 + Math.cos(t / 2) * 40);
-            c2.setAttribute('cx', 1600 + Math.cos(t / 1.5) * 80);
-            c2.setAttribute('cy', 800 + Math.sin(t / 1.2) * 60);
-            e1.setAttribute('rx', 120 + Math.sin(t / 1.3) * 18);
-            e1.setAttribute('ry', 60 + Math.cos(t / 1.7) * 10);
-            requestAnimationFrame(loop);
-        };
-        loop();
-    }
+    // Animated SVG background đã được loại bỏ hoàn toàn.
+    setupAnimations() {}
 
     // Hiển thị toast notification
     showToast(message, type = 'success') {
