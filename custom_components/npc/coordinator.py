@@ -333,7 +333,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 cursor.execute("""
                     INSERT OR IGNORE INTO monthly_bill 
                     (userevn, thang, nam, tien_dien, san_luong_kwh)
-                    VALUES (?, ?, NULL, ?)
+                    VALUES (?, ?, NULL, ?, ?)
                 """, (self.customer_id, month, year, san_luong))
                 # UPDATE riêng san_luong_kwh: không bao giờ xóa tien_dien đã có từ hoadon
                 cursor.execute("""
