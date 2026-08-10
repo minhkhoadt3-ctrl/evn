@@ -469,6 +469,15 @@ class ChartManager {
             return;
         }
 
+        // Tháng tối đa được phép hiển thị cho năm hiện tại.
+        // Dữ liệu EVN đôi khi trả về đủ 12 tháng hoặc lẫn dữ liệu của năm khác;
+        // năm hiện tại chỉ được hiển thị tới tháng hiện tại, các năm cũ vẫn đủ 12 tháng.
+        const now = new Date();
+        const currentCalendarYear = now.getFullYear();
+        const currentCalendarMonth = now.getMonth() + 1;
+        const maxMonthForYear = (year) =>
+            Number(year) === currentCalendarYear ? currentCalendarMonth : 12;
+
         const labels = Array.from({ length: 12 }, (_, i) => `T${i + 1}`);
         const datasets = [];
 
@@ -521,7 +530,11 @@ class ChartManager {
                     accData.monthly.SanLuong.forEach(item => {
                         const itemYear = parseInt(item.Năm);
                         const itemMonth = parseInt(item.Tháng);
-                        if (itemYear === year && itemMonth >= 1 && itemMonth <= 12) {
+                        if (
+                            itemYear === year &&
+                            itemMonth >= 1 &&
+                            itemMonth <= maxMonthForYear(year)
+                        ) {
                             const val = parseFloat(item['Điện tiêu thụ (KWh)']) || 0;
                             if (val > 0) yearData[itemMonth - 1] = val;
                         }
@@ -550,14 +563,29 @@ class ChartManager {
                 Object.keys(allAccountsData).forEach(accId => {
                     if (accountMode !== 'all' && accId !== accountMode) return;
                     const accData = allAccountsData[accId];
-                    if (!accData?.monthly?.SanLuong) return;
+                    const rows = accData?.monthly?.SanLuong;
+                    if (!Array.isArray(rows)) return;
 
-                    accData.monthly.SanLuong.forEach(item => {
-                        const itemYear = parseInt(item.Năm);
-                        const itemMonth = parseInt(item.Tháng);
-                        if (itemYear === year && itemMonth >= 1 && itemMonth <= 12) {
-                            const val = parseFloat(item['Điện tiêu thụ (KWh)']) || 0;
-                            if (val > 0) yearData[itemMonth - 1] = (yearData[itemMonth - 1] || 0) + val;
+                    rows.forEach(item => {
+                        const itemYear = Number.parseInt(item?.Năm, 10);
+                        const itemMonth = Number.parseInt(item?.Tháng, 10);
+
+                        // Chỉ lấy đúng năm + tháng hợp lệ.
+                        // Với năm hiện tại, tuyệt đối không lấy tháng tương lai.
+                        if (
+                            itemYear !== Number(year) ||
+                            itemMonth < 1 ||
+                            itemMonth > maxMonthForYear(year)
+                        ) return;
+
+                        const raw = item['Điện tiêu thụ (KWh)'];
+                        const val = typeof raw === 'number'
+                            ? raw
+                            : Number.parseFloat(String(raw).replace(',', '.')) || 0;
+
+                        if (Number.isFinite(val) && val > 0) {
+                            yearData[itemMonth - 1] =
+                                (yearData[itemMonth - 1] || 0) + val;
                         }
                     });
                 });
@@ -570,13 +598,14 @@ class ChartManager {
                     borderColor: color.border,
                     borderWidth: 1,
                     borderRadius: 4,
-                    tension: 0.4, // For line chart
+                    tension: 0.4,
                     pointRadius: 4,
                     pointHoverRadius: 6,
                     fill: chartType === 'line' ? false : true
                 });
             });
         }
+
 
         const isMobile = window.innerWidth < 768;
         const themeColors = this.getCurrentThemeColors();
