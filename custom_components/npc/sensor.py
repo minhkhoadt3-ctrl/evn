@@ -674,7 +674,7 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             san_luong_data = []
             sorted_rows = sorted(rows, key=lambda x: x[0], reverse=True)
             for row in sorted_rows:
-                thang, tien_dien, san_luong_kwh = row
+                thang, _, tien_dien, san_luong_kwh = row
                 thang_fmt = f"01-{int(thang):02d}-{now.year}"
                 tien_dien_data.append({
                     "Tháng": thang_fmt,
