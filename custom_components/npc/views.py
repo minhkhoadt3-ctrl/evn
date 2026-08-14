@@ -200,12 +200,12 @@ class EVNMonthlyDataView(HomeAssistantView):
                     # Safely convert
                     thang_int = int(thang) if thang is not None else 0
                     san_luong_float = float(san_luong) if san_luong is not None else 0
-                    # Chỉ dùng tiền điện THỰC TẾ có trong monthly_bill.
-                    # Không ước tính tiền cho kỳ chưa có hóa đơn.
-                    # Nếu tien_dien = NULL thì kỳ đó chưa có hóa đơn -> 0.
-                    if tien_dien is not None:
-                        tien_dien_float = float(tien_dien)
-                    else:
+                    # Chỉ trả tiền của hóa đơn thực tế đã lưu.
+                    # Không được tự ước tính tiền từ sản lượng, vì như vậy các kỳ
+                    # chưa có hóa đơn sẽ xuất hiện thành những khoản tiền giả.
+                    try:
+                        tien_dien_float = float(tien_dien) if tien_dien is not None else 0
+                    except (TypeError, ValueError):
                         tien_dien_float = 0
                     nam_int = int(nam) if nam is not None else datetime.now().year
                     

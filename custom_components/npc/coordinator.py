@@ -414,7 +414,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
             """)
 
-            # Save each bill to monthly_bill
+            # Xóa tiền cũ trong monthly_bill trước khi đồng bộ lại hóa đơn thực tế.
+            # Các bản cũ có thể đã được tự ước tính từ kWh (ví dụ ~2017 VND) và
+            # INSERT OR IGNORE sẽ giữ lại chúng nếu không làm sạch trước.
+            # san_luong_kwh vẫn được giữ nguyên; chỉ reset cột tiền.
+            cursor.execute("UPDATE monthly_bill SET tien_dien = NULL WHERE userevn = ?", (self.customer_id,))
+
+            # Save từng hóa đơn thực tế vào monthly_bill
             for bill in data:
                 thang = bill.get("THANG")
                 nam = bill.get("NAM")
