@@ -175,7 +175,7 @@ class ElectricityApp {
             this.dataManager.allAccountsData || {},
             yearsToCompare,
             accountMode,
-            { type: this.comparisonChartType, showLabels: this.comparisonShowLabels }
+            { type: this.comparisonChartType, showLabels: this.comparisonShowLabels, billingCycles: this.dataManager.billingCycles }
         );
 
         // Update active state of buttons
