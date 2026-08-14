@@ -200,14 +200,9 @@ class EVNMonthlyDataView(HomeAssistantView):
                     # Safely convert
                     thang_int = int(thang) if thang is not None else 0
                     san_luong_float = float(san_luong) if san_luong is not None else 0
-                    if tien_dien is not None:
-                        tien_dien_float = float(tien_dien)
-                    elif san_luong_float > 0:
-                        # Fallback: ước tính theo biểu giá bậc thang khi DB không có hóa đơn
-                        estimated, _ = tinhtiendien(san_luong_float)
-                        tien_dien_float = float(estimated) if estimated else 0
-                    else:
-                        tien_dien_float = 0
+                    # monthly_bill là nguồn hóa đơn thực tế.
+                    # Không tự ước tính tiền từ sản lượng nếu hóa đơn chưa có.
+                    tien_dien_float = float(tien_dien) if tien_dien is not None else 0
                     nam_int = int(nam) if nam is not None else datetime.now().year
                     
                     monthly_data["SanLuong"].append({

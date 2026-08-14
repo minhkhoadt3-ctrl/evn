@@ -526,97 +526,102 @@ class DataManager {
         const targetYear = this.normalizeYearValue(filterYear);
         const monthlyData = this.monthlyData || { SanLuong: [], TienDien: [] };
 
-        // IMPORTANT:
-        // "Tiêu Thụ Hàng Tháng" phải dùng đúng nguồn monthly.SanLuong/TienDien,
-        // giống nguồn tháng của API. Không cộng lại từ daily và không tự tính
-        // tiền theo kWh. Nếu API có nhiều record cùng Năm + Tháng (ví dụ nhiều
-        // công tơ), các record đó phải được cộng đúng một lần.
-        const consumptionMap = new Map();
+        // Nguồn của biểu đồ "Tiêu Thụ Hàng Tháng" và Tổng Quan phải là
+        // HÓA ĐƠN monthly_bill. Không cộng lại daily và không tự ước tính tiền.
+        //
+        // Mỗi hóa đơn đã là một kỳ/tháng hoàn chỉnh. Nếu dữ liệu có nhiều
+        // bản ghi trùng cùng Năm-Tháng, ưu tiên bản ghi hóa đơn cuối cùng
+        // thay vì cộng dồn lại (tránh phình số do cùng một hóa đơn bị lưu
+        // nhiều lần).
+        const billMap = new Map();
+
+        const rows = Array.isArray(monthlyData.SanLuong) ? monthlyData.SanLuong : [];
+        const costs = Array.isArray(monthlyData.TienDien) ? monthlyData.TienDien : [];
+
         const costMap = new Map();
+        costs.forEach(item => {
+            if (!item) return;
+            const year = this.normalizeYearValue(item.Năm);
+            const month = parseInt(item.Tháng, 10);
+            if (year === null || !month || month < 1 || month > 12) return;
+            if (targetYear !== null && year !== targetYear) return;
 
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth() + 1;
+            const key = `${year}-${month}`;
+            const raw = item["Tiền Điện"];
+            const cost = typeof raw === 'number'
+                ? raw
+                : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
 
-        const isFutureMonth = (year, month) => {
-            if (year > currentYear) return true;
-            return year === currentYear && month > currentMonth;
-        };
+            // Không cộng các dòng trùng hóa đơn. Lấy giá trị cuối cùng.
+            costMap.set(key, Number.isFinite(cost) ? cost : 0);
+        });
 
-        const toNumber = (value) => {
-            if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-            return parseFloat(String(value ?? '').replace(',', '.')) || 0;
-        };
+        rows.forEach(item => {
+            if (!item) return;
+            const year = this.normalizeYearValue(item.Năm);
+            const month = parseInt(item.Tháng, 10);
+            if (year === null || !month || month < 1 || month > 12) return;
+            if (targetYear !== null && year !== targetYear) return;
 
-        // Sản lượng tháng: cộng TẤT CẢ record cùng Năm + Tháng.
-        if (Array.isArray(monthlyData.SanLuong)) {
-            monthlyData.SanLuong.forEach(item => {
-                if (!item) return;
+            // Không cho các kỳ tương lai của năm hiện tại xuất hiện.
+            const now = new Date();
+            if (year > now.getFullYear() ||
+                (year === now.getFullYear() && month > now.getMonth() + 1)) {
+                return;
+            }
 
-                const year = this.normalizeYearValue(item.Năm);
-                const month = parseInt(item.Tháng, 10);
-                if (year === null || !Number.isInteger(month) || month < 1 || month > 12) return;
-                if (targetYear !== null && year !== targetYear) return;
-                if (isFutureMonth(year, month)) return;
+            const key = `${year}-${month}`;
+            const rawConsumption = item["Điện tiêu thụ (KWh)"];
+            const consumption = typeof rawConsumption === 'number'
+                ? rawConsumption
+                : parseFloat(String(rawConsumption ?? '').replace(',', '.')) || 0;
 
-                const value = toNumber(
-                    item["Điện tiêu thụ (KWh)"] ??
-                    item["Điện tiêu thụ (kWh)"] ??
-                    item["SanLuong"] ??
-                    item["Sản lượng"]
-                );
-
-                const key = `${year}-${month}`;
-                consumptionMap.set(key, (consumptionMap.get(key) || 0) + value);
+            // monthly_bill là nguồn chuẩn: không cộng chồng các record cùng kỳ.
+            billMap.set(key, {
+                Tháng: month,
+                Năm: year,
+                consumption: Number.isFinite(consumption) ? consumption : 0,
+                cost: costMap.has(key) ? costMap.get(key) : 0
             });
-        }
+        });
 
-        // Tiền điện: cũng cộng TẤT CẢ record cùng Năm + Tháng.
-        // Tuyệt đối không fallback sang tinhTienDien(consumption).
-        if (Array.isArray(monthlyData.TienDien)) {
-            monthlyData.TienDien.forEach(item => {
-                if (!item) return;
+        // Nếu có hóa đơn tiền nhưng vì một lý do nào đó thiếu SanLuong,
+        // vẫn giữ kỳ hóa đơn để Tổng Quan không mất tiền.
+        costMap.forEach((cost, key) => {
+            const [year, month] = key.split('-').map(Number);
+            if (!Number.isFinite(year) || !Number.isFinite(month)) return;
 
-                const year = this.normalizeYearValue(item.Năm);
-                const month = parseInt(item.Tháng, 10);
-                if (year === null || !Number.isInteger(month) || month < 1 || month > 12) return;
-                if (targetYear !== null && year !== targetYear) return;
-                if (isFutureMonth(year, month)) return;
+            const now = new Date();
+            if (year > now.getFullYear() ||
+                (year === now.getFullYear() && month > now.getMonth() + 1)) {
+                return;
+            }
+            if (!billMap.has(key)) {
+                billMap.set(key, {
+                    Tháng: month,
+                    Năm: year,
+                    consumption: 0,
+                    cost: Number.isFinite(cost) ? cost : 0
+                });
+            }
+        });
 
-                const value = toNumber(item["Tiền Điện"]);
-                const key = `${year}-${month}`;
-                costMap.set(key, (costMap.get(key) || 0) + value);
-            });
-        }
+        const sortedEntries = Array.from(billMap.values()).sort((a, b) =>
+            a.Năm - b.Năm || a.Tháng - b.Tháng
+        );
 
-        // Tạo danh sách kỳ THỰC SỰ có trong monthly data.
-        // Không tự sinh 12 tháng và không tạo cửa sổ 12 tháng kiểu 09/2025 -> 08/2026.
-        const keys = new Set([
-            ...consumptionMap.keys(),
-            ...costMap.keys()
-        ]);
-
-        const periods = Array.from(keys)
-            .map(key => {
-                const [year, month] = key.split('-').map(Number);
-                return { year, month };
-            })
-            .filter(({ year, month }) => !isFutureMonth(year, month))
-            .sort((a, b) => a.year - b.year || a.month - b.month);
-
-        const SanLuong = periods.map(({ year, month }) => ({
-            Tháng: month,
-            Năm: year,
-            "Điện tiêu thụ (KWh)": consumptionMap.get(`${year}-${month}`) || 0
-        }));
-
-        const TienDien = periods.map(({ year, month }) => ({
-            Tháng: month,
-            Năm: year,
-            "Tiền Điện": costMap.get(`${year}-${month}`) || 0
-        }));
-
-        return { SanLuong, TienDien };
+        return {
+            SanLuong: sortedEntries.map(entry => ({
+                Tháng: entry.Tháng,
+                Năm: entry.Năm,
+                "Điện tiêu thụ (KWh)": entry.consumption
+            })),
+            TienDien: sortedEntries.map(entry => ({
+                Tháng: entry.Tháng,
+                Năm: entry.Năm,
+                "Tiền Điện": entry.cost
+            }))
+        };
     }
 
     // Tính toán thống kê tổng quan (bao gồm kỳ hiện tại)
@@ -1276,14 +1281,51 @@ class DataManager {
         return Array.from(years).sort((a, b) => b - a);
     }
 
-    // Lọc monthly data theo năm.
-    // Dùng đúng dữ liệu tháng đã được getMonthlyAggregation() tổng hợp từ
-    // monthly.SanLuong / monthly.TienDien; không tự sinh đủ 12 tháng.
+    // Lọc dữ liệu hóa đơn theo năm. Không tự tạo 12 tháng và không
+    // chèn kỳ hiện tại/dữ liệu ngày vào biểu đồ hóa đơn.
     getFilteredMonthlyData(year) {
         const targetYear = this.normalizeYearValue(year);
-        return this.getMonthlyAggregation(targetYear);
+        const aggregated = this.getMonthlyAggregation(targetYear);
+
+        const rows = aggregated.SanLuong.map(item => {
+            const keyYear = this.normalizeYearValue(item.Năm);
+            const month = parseInt(item.Tháng, 10);
+            if (keyYear === null || !month) return null;
+
+            const costItem = aggregated.TienDien.find(cost =>
+                this.normalizeYearValue(cost.Năm) === keyYear &&
+                parseInt(cost.Tháng, 10) === month
+            );
+
+            return {
+                Tháng: month,
+                Năm: keyYear,
+                "Điện tiêu thụ (KWh)": typeof item["Điện tiêu thụ (KWh)"] === 'number'
+                    ? item["Điện tiêu thụ (KWh)"]
+                    : parseFloat(String(item["Điện tiêu thụ (KWh)"] ?? '').replace(',', '.')) || 0,
+                "Tiền Điện": costItem
+                    ? (typeof costItem["Tiền Điện"] === 'number'
+                        ? costItem["Tiền Điện"]
+                        : parseFloat(String(costItem["Tiền Điện"] ?? '').replace(',', '.')) || 0)
+                    : 0
+            };
+        }).filter(Boolean);
+
+        rows.sort((a, b) => a.Năm - b.Năm || a.Tháng - b.Tháng);
+
+        return {
+            SanLuong: rows.map(item => ({
+                Tháng: item.Tháng,
+                Năm: item.Năm,
+                "Điện tiêu thụ (KWh)": item["Điện tiêu thụ (KWh)"]
+            })),
+            TienDien: rows.map(item => ({
+                Tháng: item.Tháng,
+                Năm: item.Năm,
+                "Tiền Điện": item["Tiền Điện"]
+            }))
+        };
     }
 }
-
 // Export cho sử dụng global
 window.DataManager = DataManager;
