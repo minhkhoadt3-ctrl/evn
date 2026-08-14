@@ -596,6 +596,51 @@ class DataManager {
             });
         }
 
+        // Chỉ hiển thị các kỳ đã kết thúc. Với chu kỳ 26 -> 25,
+        // kỳ 08/2026 là 26/07 -> 25/08 nên ngày 14/08 vẫn chưa hoàn thành;
+        // các kỳ 09..12/2026 chắc chắn không được tạo/hiển thị.
+        const today = new Date();
+        today.setHours(23, 59, 59, 999);
+        const isCompletedPeriod = (year, month) => {
+            if (startDay === 1) {
+                return new Date(year, month, 0, 23, 59, 59, 999) <= today;
+            }
+            const endMonth = month;
+            const endYear = year;
+            const endDate = new Date(endYear, endMonth - 1, startDay - 1, 23, 59, 59, 999);
+            // Nếu startDay không tồn tại trong tháng (ví dụ ngày 31), JS sẽ tràn tháng;
+            // điều chỉnh về ngày cuối tháng trước.
+            const lastDay = new Date(endYear, endMonth, 0).getDate();
+            const actualEndDay = Math.min(startDay - 1, lastDay);
+            const safeEndDate = new Date(endYear, endMonth - 1, actualEndDay, 23, 59, 59, 999);
+            return safeEndDate <= today;
+        };
+
+        // Tiền hóa đơn phải được giữ độc lập với sản lượng. Nếu API có hóa đơn
+        // nhưng không có daily record của kỳ đó thì vẫn phải hiển thị tiền.
+        // Đây là điểm quan trọng để các kỳ lịch sử (ví dụ 2025) không mất tiền.
+        costMap.forEach((cost, key) => {
+            const [yearText, monthText] = key.split('-');
+            const year = parseInt(yearText, 10);
+            const month = parseInt(monthText, 10);
+            if (!isCompletedPeriod(year, month)) return;
+            if (!monthlyMap.has(key)) {
+                monthlyMap.set(key, {
+                    Tháng: month,
+                    Năm: year,
+                    consumption: 0
+                });
+            }
+        });
+
+        // Loại bỏ toàn bộ kỳ tương lai/kỳ hiện tại chưa hoàn tất, kể cả khi
+        // monthlyData.SanLuong có sẵn các record 09..12 từ API/cache cũ.
+        for (const [key, entry] of monthlyMap.entries()) {
+            if (!isCompletedPeriod(entry.Năm, entry.Tháng)) {
+                monthlyMap.delete(key);
+            }
+        }
+
         const sortedEntries = Array.from(monthlyMap.values()).sort((a, b) => a.Năm - b.Năm || a.Tháng - b.Tháng);
         const SanLuong = sortedEntries.map(entry => ({
             Tháng: entry.Tháng,
