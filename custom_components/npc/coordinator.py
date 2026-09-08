@@ -86,12 +86,26 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 await self._save_bill_data(bill_data["data"])
                 await self._save_hoadon_to_monthly_bill(bill_data["data"])
 
-            # 6. Fetch power outage schedule
-            outage_from = start_date_daily.strftime("%d/%m/%Y")
-            outage_to = today.strftime("%d/%m/%Y")
+            # 6. Fetch power outage schedule for today -> next 30 days.
+            # Always synchronize this window, including an empty API response, so
+            # cancelled/removed outage entries are removed from the local DB.
+            outage_from_dt = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            outage_to_dt = outage_from_dt + timedelta(days=30)
+            outage_from = outage_from_dt.strftime("%d/%m/%Y")
+            outage_to = outage_to_dt.strftime("%d/%m/%Y")
+
+            _LOGGER.info(
+                "Syncing power outage schedule for %s: %s -> %s",
+                self.customer_id, outage_from, outage_to,
+            )
             outage_data = await self.api.get_ngungcapdien(outage_from, outage_to)
-            if outage_data and outage_data.get("data"):
-                await self._save_outage_data(outage_data["data"])
+            outage_records = []
+            if outage_data and isinstance(outage_data.get("data"), list):
+                outage_records = outage_data["data"]
+
+            # Replace the complete 30-day snapshot instead of INSERT OR REPLACE
+            # only. This also handles data=[] and prevents stale schedules.
+            await self._save_outage_data(outage_records, outage_from_dt, outage_to_dt)
 
             return {
                 "last_update": datetime.now().isoformat(),
@@ -414,13 +428,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
             """)
 
-            # Xóa tiền cũ trong monthly_bill trước khi đồng bộ lại hóa đơn thực tế.
-            # Các bản cũ có thể đã được tự ước tính từ kWh (ví dụ ~2017 VND) và
-            # INSERT OR IGNORE sẽ giữ lại chúng nếu không làm sạch trước.
-            # san_luong_kwh vẫn được giữ nguyên; chỉ reset cột tiền.
-            cursor.execute("UPDATE monthly_bill SET tien_dien = NULL WHERE userevn = ?", (self.customer_id,))
-
-            # Save từng hóa đơn thực tế vào monthly_bill
+            # Save each bill to monthly_bill
             for bill in data:
                 thang = bill.get("THANG")
                 nam = bill.get("NAM")
@@ -442,10 +450,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error(f"Error saving hóa đơn to monthly_bill: {e}", exc_info=True)
 
-    async def _save_outage_data(self, data: list):
-        """Save power outage schedule to database."""
-        if not data:
-            return
+    async def _save_outage_data(self, data: list, window_start: Optional[datetime] = None, window_end: Optional[datetime] = None):
+        """Replace the local power-outage snapshot with the latest API data.
+
+        The outage table is intentionally treated as a snapshot for one customer.
+        Every coordinator refresh replaces all rows for that customer, including
+        when the API returns an empty list. This prevents stale/cancelled outage
+        schedules from remaining in Home Assistant.
+        """
+        if data is None:
+            data = []
 
         try:
             os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -466,7 +480,18 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
             """)
 
+            # Replace the complete snapshot for this customer.
+            # Do this even when data == [] so an empty API response clears stale data.
+            cursor.execute(
+                "DELETE FROM power_outage_schedule WHERE userevn=?",
+                (self.customer_id,),
+            )
+
+            saved_count = 0
             for outage in data:
+                if not isinstance(outage, dict):
+                    continue
+
                 # Try multiple field names for NPC API
                 ngay_bat_dau = (
                     outage.get("NGAY_BAT_DAU") or 
@@ -515,6 +540,26 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 if ngay_ket_thuc:
                     ngay_ket_thuc = self._parse_date({"NGAY": ngay_ket_thuc})
 
+                # SPC can return a broader list because its endpoint does not take
+                # a date range. Keep only records whose outage interval intersects
+                # the requested today -> +30 days window.
+                if window_start is not None and window_end is not None and ngay_bat_dau:
+                    try:
+                        start_dt = datetime.strptime(ngay_bat_dau, "%d-%m-%Y")
+                        end_dt = datetime.strptime(ngay_ket_thuc or ngay_bat_dau, "%d-%m-%Y")
+                        if end_dt < window_start.replace(hour=0, minute=0, second=0, microsecond=0) or start_dt > window_end.replace(hour=23, minute=59, second=59, microsecond=999999):
+                            continue
+                    except ValueError:
+                        _LOGGER.debug("Skipping outage with invalid date: %s", outage)
+                        continue
+
+                # Do not store malformed records without a start date/time; they
+                # cannot be rendered or keyed reliably by the sensor.
+                if not ngay_bat_dau:
+                    continue
+                if not thoi_gian_bat_dau:
+                    thoi_gian_bat_dau = "00:00"
+
                 cursor.execute("""
                     INSERT OR REPLACE INTO power_outage_schedule 
                     (userevn, ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau, 
@@ -522,10 +567,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (self.customer_id, ngay_bat_dau, ngay_ket_thuc, 
                       thoi_gian_bat_dau, thoi_gian_ket_thuc, ly_do, khu_vuc))
+                saved_count += 1
 
             conn.commit()
             conn.close()
-            _LOGGER.debug(f"Saved {len(data)} outage records for {self.customer_id}")
+            _LOGGER.info(
+                "Power outage snapshot synchronized for %s: API=%d, saved=%d",
+                self.customer_id, len(data), saved_count,
+            )
 
         except Exception as e:
             _LOGGER.error(f"Error saving outage data: {e}", exc_info=True)
