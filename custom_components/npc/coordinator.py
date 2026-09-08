@@ -575,8 +575,26 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     or outage.get("khu_vuc")
                     or outage.get("PHAM_VI")
                     or outage.get("pham_vi")
+                    or outage.get("KHUVUCMATDIEN")
+                    or outage.get("khuvucmatdien")
                     or ""
                 )
+
+                # Defensive fallback for raw NPC responses: "15/09/2026 07:30".
+                if not ngay_bat_dau:
+                    raw_start = outage.get("TGIAN_BDAU") or outage.get("tgian_bdau")
+                    if raw_start:
+                        parts = str(raw_start).strip().split(None, 1)
+                        ngay_bat_dau = parts[0]
+                        if len(parts) == 2 and not thoi_gian_bat_dau:
+                            thoi_gian_bat_dau = parts[1].strip()
+                if not ngay_ket_thuc:
+                    raw_end = outage.get("TGIAN_KTHUC") or outage.get("tgian_kthuc")
+                    if raw_end:
+                        parts = str(raw_end).strip().split(None, 1)
+                        ngay_ket_thuc = parts[0]
+                        if len(parts) == 2 and not thoi_gian_ket_thuc:
+                            thoi_gian_ket_thuc = parts[1].strip()
 
                 if ngay_bat_dau:
                     ngay_bat_dau = self._parse_date({"NGAY": ngay_bat_dau})
