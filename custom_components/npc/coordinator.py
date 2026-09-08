@@ -73,9 +73,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     exc_info=True,
                 )
 
-            # 4. Fetch daily data in batches of 15 days
-            start_date_daily = datetime(2025, 1, 1)
+            # 4. Fetch daily data in batches of 15 days.
+            # EVN history is limited to the latest 24 months; do not walk back
+            # to an arbitrary fixed date because the API/account may only retain
+            # a rolling two-year window.
+            start_date_daily = today - timedelta(days=730)
             batch_days = 15
+
+            # Remove stale local history outside the same 24-month retention
+            # window so old rows (e.g. 2016) cannot keep appearing in sensors.
+            await self.hass.async_add_executor_job(self._cleanup_history_retention)
             
             all_daily_data = []
             current_start = start_date_daily
@@ -162,28 +169,61 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn.commit()
         conn.close()
 
-    def _get_missing_monthly_periods(self):
-        """Identify which month/year periods are missing from DB (Synchronous)."""
-        missing = []
+    def _cleanup_history_retention(self):
+        """Keep only the rolling latest 24 months of local history."""
         today = datetime.now()
+        cutoff = today - timedelta(days=730)
+        cutoff_month = cutoff.year * 12 + cutoff.month
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        for year in range(2016, today.year + 1):
-            max_month = today.month if year == today.year else 12
-            for month in range(1, max_month + 1):
-                # Always fetch current year and last year to keep them up to date
-                if year >= today.year - 1:
-                    missing.append((month, year))
-                    continue
-                
-                cursor.execute(
-                    "SELECT 1 FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ? AND san_luong_kwh IS NOT NULL",
-                    (self.customer_id, month, year)
-                )
-                if not cursor.fetchone():
-                    missing.append((month, year))
-        
+
+        # daily_consumption stores dates as DD-MM-YYYY.
+        cutoff_daily = cutoff.strftime("%d-%m-%Y")
+        cursor.execute(
+            "DELETE FROM daily_consumption WHERE userevn = ? AND substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) < ?",
+            (self.customer_id, cutoff.strftime("%Y-%m-%d"))
+        )
+
+        # monthly_bill stores month/year separately.
+        cursor.execute(
+            "DELETE FROM monthly_bill WHERE userevn = ? AND (nam * 12 + thang) < ?",
+            (self.customer_id, cutoff_month)
+        )
+
+        conn.commit()
+        conn.close()
+        _LOGGER.debug(
+            f"History retention cleanup for {self.customer_id}: "
+            f"kept records from {cutoff.strftime('%d/%m/%Y')} onward"
+        )
+
+    def _get_missing_monthly_periods(self):
+        """Identify missing monthly periods only inside the rolling 24-month window."""
+        missing = []
+        today = datetime.now()
+        cutoff = today - timedelta(days=730)
+        first_month = datetime(cutoff.year, cutoff.month, 1)
+        current_month = datetime(today.year, today.month, 1)
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        month_cursor = first_month
+        while month_cursor <= current_month:
+            month = month_cursor.month
+            year = month_cursor.year
+            cursor.execute(
+                "SELECT 1 FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ? AND san_luong_kwh IS NOT NULL",
+                (self.customer_id, month, year)
+            )
+            if not cursor.fetchone():
+                missing.append((month, year))
+
+            if month_cursor.month == 12:
+                month_cursor = datetime(month_cursor.year + 1, 1, 1)
+            else:
+                month_cursor = datetime(month_cursor.year, month_cursor.month + 1, 1)
+
         conn.close()
         return missing
 
@@ -535,26 +575,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     or outage.get("khu_vuc")
                     or outage.get("PHAM_VI")
                     or outage.get("pham_vi")
-                    or outage.get("KHUVUCMATDIEN")
-                    or outage.get("khuvucmatdien")
                     or ""
                 )
-
-                # Defensive fallback for raw NPC responses: "15/09/2026 07:30".
-                if not ngay_bat_dau:
-                    raw_start = outage.get("TGIAN_BDAU") or outage.get("tgian_bdau")
-                    if raw_start:
-                        parts = str(raw_start).strip().split(None, 1)
-                        ngay_bat_dau = parts[0]
-                        if len(parts) == 2 and not thoi_gian_bat_dau:
-                            thoi_gian_bat_dau = parts[1].strip()
-                if not ngay_ket_thuc:
-                    raw_end = outage.get("TGIAN_KTHUC") or outage.get("tgian_kthuc")
-                    if raw_end:
-                        parts = str(raw_end).strip().split(None, 1)
-                        ngay_ket_thuc = parts[0]
-                        if len(parts) == 2 and not thoi_gian_ket_thuc:
-                            thoi_gian_ket_thuc = parts[1].strip()
 
                 if ngay_bat_dau:
                     ngay_bat_dau = self._parse_date({"NGAY": ngay_bat_dau})

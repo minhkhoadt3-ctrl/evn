@@ -550,44 +550,6 @@ class EVNAPI:
         
         return converted
 
-    def _convert_npc_outage_to_standard_format(self, records: list) -> list:
-        """Convert NPC outage records using TGIAN_BDAU/TGIAN_KTHUC fields."""
-        converted = []
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            item = dict(record)
-            start = record.get("TGIAN_BDAU") or record.get("tgian_bdau")
-            end = record.get("TGIAN_KTHUC") or record.get("tgian_kthuc")
-
-            if start:
-                parts = str(start).strip().split(None, 1)
-                if parts:
-                    item["NGAY_BAT_DAU"] = parts[0]
-                    item["NGAY"] = parts[0]
-                if len(parts) == 2:
-                    item["THOI_GIAN_BAT_DAU"] = parts[1].strip()
-
-            if end:
-                parts = str(end).strip().split(None, 1)
-                if parts:
-                    item["NGAY_KET_THUC"] = parts[0]
-                if len(parts) == 2:
-                    item["THOI_GIAN_KET_THUC"] = parts[1].strip()
-
-            area = record.get("KHUVUCMATDIEN") or record.get("khuvucmatdien")
-            if area:
-                item["KHU_VUC"] = area
-                item["khu_vuc"] = area
-                item["DIA_CHI"] = area
-                item["dia_chi"] = area
-
-            if "LY_DO" in record:
-                item["ly_do"] = record.get("LY_DO")
-
-            converted.append(item)
-        return converted
-
     async def get_chisongay(
         self, from_date: str, to_date: str
     ) -> Optional[Dict[str, Any]]:
@@ -1154,13 +1116,9 @@ class EVNAPI:
                                     f"type={type(data).__name__}, "
                                     f"records={len(data.get('data', [])) if isinstance(data, dict) and isinstance(data.get('data'), list) else (len(data) if isinstance(data, list) else 'n/a')}"
                                 )
-                                if isinstance(data, dict) and isinstance(data.get("data"), list):
-                                    records = data["data"]
-                                    if self.region == "CPC":
-                                        records = self._convert_cpc_outage_to_standard_format(records)
-                                    elif self.region == "NPC":
-                                        records = self._convert_npc_outage_to_standard_format(records)
-                                    return {"data": records}
+                                if self.region == "CPC" and isinstance(data, dict) and isinstance(data.get("data"), list):
+                                    converted_data = self._convert_cpc_outage_to_standard_format(data["data"])
+                                    return {"data": converted_data}
                                 if isinstance(data, list):
                                     return {"data": data}
                                 return cast(Dict[str, Any], data)
@@ -1176,13 +1134,9 @@ class EVNAPI:
                         f"type={type(data).__name__}, "
                         f"records={len(data.get('data', [])) if isinstance(data, dict) and isinstance(data.get('data'), list) else (len(data) if isinstance(data, list) else 'n/a')}"
                     )
-                    if isinstance(data, dict) and isinstance(data.get("data"), list):
-                        records = data["data"]
-                        if self.region == "CPC":
-                            records = self._convert_cpc_outage_to_standard_format(records)
-                        elif self.region == "NPC":
-                            records = self._convert_npc_outage_to_standard_format(records)
-                        return {"data": records}
+                    if self.region == "CPC" and isinstance(data, dict) and isinstance(data.get("data"), list):
+                        converted_data = self._convert_cpc_outage_to_standard_format(data["data"])
+                        return {"data": converted_data}
                     if isinstance(data, list):
                         return {"data": data}
                     return cast(Dict[str, Any], data)
