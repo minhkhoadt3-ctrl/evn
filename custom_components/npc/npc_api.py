@@ -1082,10 +1082,18 @@ class EVNAPI:
                 # Các region khác dùng endpoint chung
                 url = f"{self.base_url}/api/evn/tracuu/ngungcapdien"
 
+                ma_dviqly, ma_ddo = self._get_ma_dviqly_and_ma_ddo()
                 payload = {
+                    "MA_DVIQLY": ma_dviqly,
+                    "MA_DDO": ma_ddo,
                     "TU_NGAY": from_date,
                     "DEN_NGAY": to_date,
                 }
+
+                _LOGGER.info(
+                    f"get_ngungcapdien ({self.region}): "
+                    f"customer={self.customer_id}, payload={payload}"
+                )
 
                 headers = {
                     "accept": "application/json, text/plain, */*",
@@ -1103,11 +1111,16 @@ class EVNAPI:
                                     _LOGGER.debug(f"get_ngungcapdien failed with status {retry_resp.status}")
                                     return None
                                 data = await retry_resp.json()
-                                # Chuyển đổi format cho CPC
-                                if self.region == "CPC" and isinstance(data, dict) and data.get("data"):
-                                    if isinstance(data["data"], list):
-                                        converted_data = self._convert_cpc_outage_to_standard_format(data["data"])
-                                        return {"data": converted_data}
+                                _LOGGER.info(
+                                    f"get_ngungcapdien ({self.region}) retry response: "
+                                    f"type={type(data).__name__}, "
+                                    f"records={len(data.get('data', [])) if isinstance(data, dict) and isinstance(data.get('data'), list) else (len(data) if isinstance(data, list) else 'n/a')}"
+                                )
+                                if self.region == "CPC" and isinstance(data, dict) and isinstance(data.get("data"), list):
+                                    converted_data = self._convert_cpc_outage_to_standard_format(data["data"])
+                                    return {"data": converted_data}
+                                if isinstance(data, list):
+                                    return {"data": data}
                                 return cast(Dict[str, Any], data)
                         return None
 
@@ -1116,11 +1129,16 @@ class EVNAPI:
                         return None
 
                     data = await resp.json()
-                    # Chuyển đổi format cho CPC
-                    if self.region == "CPC" and isinstance(data, dict) and data.get("data"):
-                        if isinstance(data["data"], list):
-                            converted_data = self._convert_cpc_outage_to_standard_format(data["data"])
-                            return {"data": converted_data}
+                    _LOGGER.info(
+                        f"get_ngungcapdien ({self.region}) response: "
+                        f"type={type(data).__name__}, "
+                        f"records={len(data.get('data', [])) if isinstance(data, dict) and isinstance(data.get('data'), list) else (len(data) if isinstance(data, list) else 'n/a')}"
+                    )
+                    if self.region == "CPC" and isinstance(data, dict) and isinstance(data.get("data"), list):
+                        converted_data = self._convert_cpc_outage_to_standard_format(data["data"])
+                        return {"data": converted_data}
+                    if isinstance(data, list):
+                        return {"data": data}
                     return cast(Dict[str, Any], data)
 
         except Exception as e:
