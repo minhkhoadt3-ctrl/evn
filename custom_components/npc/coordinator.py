@@ -74,10 +74,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
 
             # 4. Fetch daily data in batches of 15 days.
-            # EVN history is limited to the latest 24 months; do not walk back
-            # to an arbitrary fixed date because the API/account may only retain
-            # a rolling two-year window.
-            start_date_daily = today - timedelta(days=730)
+            # Chỉ lấy từ 01/01/2025 đến hiện tại
+            start_date_daily = datetime(2025, 1, 1)
             batch_days = 15
 
             # Remove stale local history outside the same 24-month retention
@@ -170,9 +168,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn.close()
 
     def _cleanup_history_retention(self):
-        """Keep only the rolling latest 24 months of local history."""
+        """Keep only records from 2025 onward."""
         today = datetime.now()
-        cutoff = today - timedelta(days=730)
+        cutoff = datetime(2025, 1, 1)
         cutoff_month = cutoff.year * 12 + cutoff.month
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -198,11 +196,12 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     def _get_missing_monthly_periods(self):
-        """Identify missing monthly periods only inside the rolling 24-month window."""
+        """Identify missing monthly periods only from 2025 to now."""
         missing = []
         today = datetime.now()
-        cutoff = today - timedelta(days=730)
-        first_month = datetime(cutoff.year, cutoff.month, 1)
+
+        # Chỉ lấy từ tháng 1/2025 đến hiện tại
+        first_month = datetime(2025, 1, 1)
         current_month = datetime(today.year, today.month, 1)
 
         conn = sqlite3.connect(self.db_path)

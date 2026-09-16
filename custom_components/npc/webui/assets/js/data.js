@@ -864,14 +864,21 @@ class DataManager {
             return [];
         }
 
-        // Lọc dailyData theo năm nếu có
+        // Lọc dailyData theo năm nếu có, luôn lọc bỏ dữ liệu trước 2025
         let filteredDailyData = this.dailyData;
         const targetYear = this.normalizeYearValue(filterYear);
         if (targetYear !== null) {
             filteredDailyData = this.dailyData.filter(day => {
                 if (!day.Ngày) return false;
                 const year = parseInt(day.Ngày.split('-')[2]);
-                return year === targetYear;
+                return year === targetYear && year >= 2025;
+            });
+        } else {
+            // Nếu không filter theo năm, vẫn chỉ lấy từ 2025 trở đi
+            filteredDailyData = this.dailyData.filter(day => {
+                if (!day.Ngày) return false;
+                const year = parseInt(day.Ngày.split('-')[2]);
+                return year >= 2025;
             });
         }
 
@@ -882,7 +889,6 @@ class DataManager {
                 new Date(b.split('-').reverse().join('-')) -
                 new Date(a.split('-').reverse().join('-'))
             );
-            console.log('📅 Calendar type result:', result);
             return result;
         } else if (billingCycle.type === 'cycle' && billingCycle.startDay === 1) {
             // Chu kỳ được cấu hình thủ công từ ngày 1 - xử lý như tháng dương lịch nhưng với "Kỳ này"
@@ -906,8 +912,7 @@ class DataManager {
                 }
             }
 
-            console.log('📅 Manual day 1 cycle result:', sortedMonths);
-            return sortedMonths;
+                return sortedMonths;
         } else {
             // Chu kỳ thanh toán tùy chỉnh - tạo danh sách kỳ thanh toán
             const result = this.generateBillingPeriods(billingCycle.startDay, filteredDailyData, filterYear);

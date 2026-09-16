@@ -298,8 +298,9 @@ def layhoadon(userevn, year):
     conn = get_db_conn()
     cursor = conn.cursor()
     if year == "all":
+        # Chỉ lấy từ 2025 trở đi
         cursor.execute(
-            "SELECT thang, tien_dien, san_luong_kwh, nam FROM monthly_bill WHERE userevn=? ORDER BY nam ASC, thang ASC",
+            "SELECT thang, tien_dien, san_luong_kwh, nam FROM monthly_bill WHERE userevn=? AND nam >= 2025 ORDER BY nam ASC, thang ASC",
             (userevn,)
         )
     else:
