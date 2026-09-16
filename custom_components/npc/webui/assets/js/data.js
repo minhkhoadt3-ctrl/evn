@@ -469,6 +469,37 @@ class DataManager {
         return Number.isNaN(year) ? null : year;
     }
 
+    // Tính tiền điện từ kWh theo công thức bậc thang EVN
+    calculateElectricityCost(kwh) {
+        if (!kwh || kwh <= 0) return 0;
+
+        const tiers = [
+            { limit: 50, price: 1984 },
+            { limit: 50, price: 2050 },
+            { limit: 100, price: 2380 },
+            { limit: 100, price: 2998 },
+            { limit: 100, price: 3350 },
+            { limit: Infinity, price: 3460 }
+        ];
+
+        let totalCost = 0;
+        let remainingKwh = kwh;
+
+        for (const tier of tiers) {
+            const kwhInTier = Math.min(remainingKwh, tier.limit);
+            const cost = kwhInTier * tier.price;
+            totalCost += cost;
+            remainingKwh -= kwhInTier;
+            if (remainingKwh <= 0) break;
+        }
+
+        // Thuế 8%
+        const tax = totalCost * 0.08;
+        const totalWithTax = totalCost + tax;
+
+        return Math.round(totalWithTax);
+    }
+
     buildBillingPeriodRange(month, year, billingCycle) {
         if (billingCycle.type === 'calendar' || (billingCycle.type === 'cycle' && billingCycle.startDay === 1)) {
             const start = new Date(year, month - 1, 1);
@@ -529,6 +560,8 @@ class DataManager {
         const startDay = Math.max(1, Math.min(31, parseInt(billingCycle.startDay, 10) || 1));
         const monthlyMap = new Map();
 
+
+
         const parseDailyDate = (value) => {
             if (!value) return null;
             const parts = String(value).split('-').map(Number);
@@ -549,39 +582,46 @@ class DataManager {
             return { year, month };
         };
 
-        // Sản lượng: gom theo đúng kỳ điện lực (ngày bắt đầu -> ngày trước ngày bắt đầu kỳ sau).
-        if (Array.isArray(this.dailyData)) {
-            this.dailyData.forEach(day => {
-                const date = parseDailyDate(day?.Ngày);
-                if (!date || date > new Date()) return;
-                const period = getPeriodKey(date);
-                if (targetYear !== null && period.year !== targetYear) return;
-                const raw = day["Điện tiêu thụ (kWh)"];
-                const value = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
-                if (!Number.isFinite(value) || value < 0) return;
-                const key = `${period.year}-${period.month}`;
-                const entry = monthlyMap.get(key) || { Tháng: period.month, Năm: period.year, consumption: 0 };
-                entry.consumption += value;
-                monthlyMap.set(key, entry);
-            });
-        }
-
-        // Nếu không có dữ liệu ngày cho một kỳ, dùng bản ghi monthly đã lưu.
-        if (Array.isArray(monthlyData.SanLuong)) {
+        // ƯU TIÊN: Dùng sản lượng từ monthlyData (đã có chỉ số chốt từ hóa đơn)
+        // Nếu không có monthlyData hoặc monthlyData rỗng, tính từ dailyData theo chu kỳ
+        let hasMonthlyData = false;
+        if (Array.isArray(monthlyData.SanLuong) && monthlyData.SanLuong.length > 0) {
+            hasMonthlyData = true;
             monthlyData.SanLuong.forEach(item => {
                 const year = this.normalizeYearValue(item?.Năm);
                 const month = parseInt(item?.Tháng, 10);
                 if (year === null || !month || month < 1 || month > 12) return;
                 if (targetYear !== null && year !== targetYear) return;
                 const key = `${year}-${month}`;
-                if (monthlyMap.has(key)) return;
                 const raw = item["Điện tiêu thụ (KWh)"];
                 const consumption = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
-                if (consumption > 0) monthlyMap.set(key, { Tháng: month, Năm: year, consumption });
+                monthlyMap.set(key, { Tháng: month, Năm: year, consumption });
             });
         }
 
-        // TIỀN: chỉ lấy hóa đơn thực tế. Tuyệt đối không tự tính tiền từ kWh.
+        // Nếu không có monthlyData hoặc cần bổ sung, tính từ dailyData theo chu kỳ
+        if (Array.isArray(this.dailyData)) {
+            this.dailyData.forEach(day => {
+                const date = parseDailyDate(day?.Ngày);
+                if (!date || date > new Date()) return;
+                const period = getPeriodKey(date);
+                if (targetYear !== null && period.year !== targetYear) return;
+                const key = `${period.year}-${period.month}`;
+
+                // Nếu có monthlyData, chỉ bổ sung cho các kỳ không có trong monthlyData
+                // Nếu không có monthlyData, tính tất cả từ dailyData
+                if (hasMonthlyData && monthlyMap.has(key)) return;
+
+                const raw = day["Điện tiêu thụ (kWh)"];
+                const value = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
+                if (!Number.isFinite(value) || value < 0) return;
+                const entry = monthlyMap.get(key) || { Tháng: period.month, Năm: period.year, consumption: 0 };
+                entry.consumption += value;
+                monthlyMap.set(key, entry);
+            });
+        }
+
+        // TIỀN: ưu tiên hóa đơn thực tế, nếu không có thì tự tính từ sản lượng
         const costMap = new Map();
         if (Array.isArray(monthlyData.TienDien)) {
             monthlyData.TienDien.forEach(item => {
@@ -595,6 +635,15 @@ class DataManager {
                 if (cost > 0) costMap.set(`${year}-${month}`, cost);
             });
         }
+
+        // Tính tiền từ sản lượng cho các kỳ không có tiền hóa đơn
+        monthlyMap.forEach((entry, key) => {
+            if (!costMap.has(key) && entry.consumption > 0) {
+                const calculatedCost = this.calculateElectricityCost(entry.consumption);
+                costMap.set(key, calculatedCost);
+                console.log(`💰 Calculated cost for ${entry.Tháng}/${entry.Năm}: ${entry.consumption} kWh -> ${calculatedCost} VND`);
+            }
+        });
 
         // Chỉ hiển thị các kỳ đã kết thúc. Với chu kỳ 26 -> 25,
         // kỳ 08/2026 là 26/07 -> 25/08 nên ngày 14/08 vẫn chưa hoàn thành;
@@ -623,7 +672,11 @@ class DataManager {
             const [yearText, monthText] = key.split('-');
             const year = parseInt(yearText, 10);
             const month = parseInt(monthText, 10);
-            if (!isCompletedPeriod(year, month)) return;
+
+            // Bỏ qua check isCompletedPeriod cho các kỳ có tiền hóa đơn
+            // để đảm bảo các kỳ lịch sử vẫn được hiển thị
+            // if (!isCompletedPeriod(year, month)) return;
+
             if (!monthlyMap.has(key)) {
                 monthlyMap.set(key, {
                     Tháng: month,
@@ -638,6 +691,7 @@ class DataManager {
         for (const [key, entry] of monthlyMap.entries()) {
             if (!isCompletedPeriod(entry.Năm, entry.Tháng)) {
                 monthlyMap.delete(key);
+                costMap.delete(key); // Xóa cả tiền tương ứng
             }
         }
 
@@ -856,14 +910,15 @@ class DataManager {
             return sortedMonths;
         } else {
             // Chu kỳ thanh toán tùy chỉnh - tạo danh sách kỳ thanh toán
-            const result = this.generateBillingPeriods(billingCycle.startDay, filteredDailyData);
+            const result = this.generateBillingPeriods(billingCycle.startDay, filteredDailyData, filterYear);
             console.log('📅 Custom billing cycle result:', result);
             return result;
         }
     }// Tạo danh sách các kỳ thanh toán từ dữ liệu có sẵn
-    generateBillingPeriods(startDay, filteredDailyData = null) {
+    generateBillingPeriods(startDay, filteredDailyData = null, filterYear = null) {
         // Sử dụng filteredDailyData nếu có, nếu không thì dùng this.dailyData
         const dataToUse = filteredDailyData || this.dailyData;
+        const targetYear = this.normalizeYearValue(filterYear);
 
         // Đảm bảo dailyData là array
         if (!dataToUse || !Array.isArray(dataToUse) || dataToUse.length === 0) {
@@ -906,18 +961,20 @@ class DataManager {
             const isCurrentPeriod = today >= periods_info.start && today <= periods_info.end_ky;
 
             // Xử lý kỳ nếu:
-            // 1. Có dữ liệu trong kỳ, HOẶC  
+            // 1. Có dữ liệu trong kỳ, HOẶC
             // 2. Là kỳ hiện tại (luôn hiển thị kỳ hiện tại dù chưa có đủ dữ liệu)
             const shouldIncludePeriod = periods_info.start <= lastDate || isCurrentPeriod;
 
-            if (shouldIncludePeriod) {                // Kiểm tra xem chu kỳ này có dữ liệu không
+            if (shouldIncludePeriod) {
+                // Kiểm tra xem chu kỳ này có dữ liệu không
                 const hasDataInPeriod = dataToUse.some(day => {
                     const dayDate = new Date(day.Ngày.split('-').reverse().join('-'));
                     return dayDate >= periods_info.start && dayDate <= periods_info.end_ky;
                 });
 
                 // Thêm kỳ nếu có dữ liệu HOẶC là kỳ hiện tại
-                if (hasDataInPeriod || isCurrentPeriod) {                    // Logic hiển thị tháng theo chuẩn EVN:
+                if (hasDataInPeriod || isCurrentPeriod) {
+                    // Logic hiển thị tháng theo chuẩn EVN:
                     // Kỳ thanh toán được đặt tên theo tháng kết thúc (tháng hóa đơn)
                     // VD: Kỳ 10/6 → 9/7 = "Kỳ tháng 7" vì hóa đơn phát hành tháng 7
                     let displayMonth, displayYear;
@@ -934,6 +991,12 @@ class DataManager {
                         // Chu kỳ tùy chỉnh: dùng tháng kết thúc (tháng hóa đơn)
                         displayMonth = periods_info.end_ky.getMonth() + 1;
                         displayYear = periods_info.end_ky.getFullYear();
+                    }
+
+                    // Filter theo năm nếu có
+                    if (targetYear !== null && displayYear !== targetYear) {
+                        currentDate.setMonth(currentDate.getMonth() - 1);
+                        continue;
                     }
 
                     const periodLabel = `${displayMonth.toString().padStart(2, '0')}-${displayYear}`;

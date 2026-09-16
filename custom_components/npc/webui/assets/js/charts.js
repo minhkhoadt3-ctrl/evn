@@ -26,6 +26,8 @@ class ChartManager {
             this.monthlyChart.destroy();
         }
 
+
+
         // Chuẩn bị dữ liệu biểu đồ
         const labels = [];
         const consumptionData = [];
@@ -67,7 +69,37 @@ class ChartManager {
             const cost = correspondingCost
                 ? (typeof correspondingCost["Tiền Điện"] === 'number' ? correspondingCost["Tiền Điện"] : parseInt(correspondingCost["Tiền Điện"]))
                 : 0;
-            costData.push(cost);
+
+            // Nếu không có tiền từ hóa đơn nhưng có sản lượng, tính từ sản lượng
+            let finalCost = cost;
+            if (cost === 0 && consumption > 0) {
+                // Tính tiền từ công thức bậc thang EVN
+                const tiers = [
+                    { limit: 50, price: 1984 },
+                    { limit: 50, price: 2050 },
+                    { limit: 100, price: 2380 },
+                    { limit: 100, price: 2998 },
+                    { limit: 100, price: 3350 },
+                    { limit: Infinity, price: 3460 }
+                ];
+
+                let totalCost = 0;
+                let remainingKwh = consumption;
+
+                for (const tier of tiers) {
+                    const kwhInTier = Math.min(remainingKwh, tier.limit);
+                    const tierCost = kwhInTier * tier.price;
+                    totalCost += tierCost;
+                    remainingKwh -= kwhInTier;
+                    if (remainingKwh <= 0) break;
+                }
+
+                // Thuế 8%
+                const tax = totalCost * 0.08;
+                finalCost = Math.round(totalCost + tax);
+            }
+
+            costData.push(finalCost);
 
             const itemYear = typeof item.Năm === 'number' ? item.Năm : parseInt(item.Năm, 10);
             const itemMonth = typeof item.Tháng === 'number' ? item.Tháng : parseInt(item.Tháng, 10);

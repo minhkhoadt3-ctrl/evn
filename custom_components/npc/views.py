@@ -370,3 +370,53 @@ class EVNSyncHistoryView(HomeAssistantView):
                 {"success": False, "message": "Internal server error"},
                 status=500
             )
+
+
+class EVNDebugDataView(HomeAssistantView):
+    """View to debug monthly data in database."""
+
+    url = "/api/npc/debug/{account}"
+    name = "api:npc:debug"
+    requires_auth = True
+
+    def __init__(self, hass):
+        """Initialize the view."""
+        self.hass = hass
+
+    async def get(self, request, account):
+        """Debug monthly data for account."""
+        try:
+            hass = request.app["hass"]
+            conn = await hass.async_add_executor_job(get_db_conn)
+            cursor = conn.cursor()
+            
+            # Lấy tất cả dữ liệu từ monthly_bill
+            cursor.execute(
+                "SELECT thang, nam, tien_dien, san_luong_kwh FROM monthly_bill WHERE userevn=? ORDER BY nam ASC, thang ASC",
+                (account,)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            
+            monthly_data = []
+            for row in rows:
+                monthly_data.append({
+                    "thang": row[0],
+                    "nam": row[1],
+                    "tien_dien": row[2],
+                    "san_luong_kwh": row[3]
+                })
+            
+            _LOGGER.info(f"Debug data for {account}: {len(monthly_data)} records")
+            return web.json_response({
+                "account": account,
+                "total_records": len(monthly_data),
+                "monthly_data": monthly_data
+            })
+            
+        except Exception as ex:
+            _LOGGER.error("Error getting debug data for %s: %s", account, str(ex), exc_info=True)
+            return web.json_response(
+                {"error": "Internal server error"},
+                status=500
+            )
