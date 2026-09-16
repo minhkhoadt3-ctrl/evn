@@ -560,6 +560,10 @@ class DataManager {
         const startDay = Math.max(1, Math.min(31, parseInt(billingCycle.startDay, 10) || 1));
         const monthlyMap = new Map();
 
+        console.log('📊 getMonthlyAggregation - targetYear:', targetYear);
+        console.log('📊 getMonthlyAggregation - monthlyData.SanLuong:', monthlyData.SanLuong);
+        console.log('📊 getMonthlyAggregation - monthlyData.TienDien:', monthlyData.TienDien);
+
 
 
         const parseDailyDate = (value) => {
@@ -591,6 +595,8 @@ class DataManager {
                 const year = this.normalizeYearValue(item?.Năm);
                 const month = parseInt(item?.Tháng, 10);
                 if (year === null || !month || month < 1 || month > 12) return;
+                // Luôn lọc bỏ dữ liệu trước 2025
+                if (year < 2025) return;
                 if (targetYear !== null && year !== targetYear) return;
                 const key = `${year}-${month}`;
                 const raw = item["Điện tiêu thụ (KWh)"];
@@ -628,6 +634,8 @@ class DataManager {
                 const year = this.normalizeYearValue(item?.Năm);
                 const month = parseInt(item?.Tháng, 10);
                 if (year === null || !month || month < 1 || month > 12) return;
+                // Luôn lọc bỏ dữ liệu trước 2025
+                if (year < 2025) return;
                 if (targetYear !== null && year !== targetYear) return;
                 const raw = item["Tiền Điện"];
                 const cost = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
@@ -651,6 +659,9 @@ class DataManager {
         const today = new Date();
         today.setHours(23, 59, 59, 999);
         const isCompletedPeriod = (year, month) => {
+            // TẠM THỜI: Bỏ qua logic isCompletedPeriod để debug
+            return true;
+
             if (startDay === 1) {
                 return new Date(year, month, 0, 23, 59, 59, 999) <= today;
             }
@@ -867,20 +878,15 @@ class DataManager {
         // Lọc dailyData theo năm nếu có, luôn lọc bỏ dữ liệu trước 2025
         let filteredDailyData = this.dailyData;
         const targetYear = this.normalizeYearValue(filterYear);
-        if (targetYear !== null) {
-            filteredDailyData = this.dailyData.filter(day => {
-                if (!day.Ngày) return false;
-                const year = parseInt(day.Ngày.split('-')[2]);
-                return year === targetYear && year >= 2025;
-            });
-        } else {
-            // Nếu không filter theo năm, vẫn chỉ lấy từ 2025 trở đi
-            filteredDailyData = this.dailyData.filter(day => {
-                if (!day.Ngày) return false;
-                const year = parseInt(day.Ngày.split('-')[2]);
-                return year >= 2025;
-            });
-        }
+
+        // Luôn lọc bỏ dữ liệu trước 2025
+        filteredDailyData = this.dailyData.filter(day => {
+            if (!day.Ngày) return false;
+            const year = parseInt(day.Ngày.split('-')[2]);
+            if (year < 2025) return false;
+            if (targetYear !== null && year !== targetYear) return false;
+            return true;
+        });
 
         if (billingCycle.type === 'calendar') {
             // Chu kỳ theo tháng dương lịch (cũ)
