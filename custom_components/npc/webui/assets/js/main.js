@@ -99,16 +99,10 @@ class ElectricityApp {
         this.chartManager.createDailyChart(initialDailyData);
 
         // Hiển thị 5 ngày gần đây trong card tìm kiếm
-        // Lùi 1 ngày từ hôm nay để tránh lấy ngày hiện tại nếu không có dữ liệu
         const today = new Date();
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
-        
-        // Lùi thêm 4 ngày nữa để có tổng cộng 5 ngày gần nhất có dữ liệu
-        const fiveDaysAgo = new Date(yesterday);
-        fiveDaysAgo.setDate(yesterday.getDate() - 4);
-        
-        const recentDays = this.dataManager.getDataByDateRange(fiveDaysAgo, yesterday);
+        const fiveDaysAgo = new Date(today);
+        fiveDaysAgo.setDate(today.getDate() - 5);
+        const recentDays = this.dataManager.getDataByDateRange(fiveDaysAgo, today);
         this.uiManager.displayRecentDays(recentDays);
 
         // --- Cấu phần cho Biểu đồ So sánh ---
