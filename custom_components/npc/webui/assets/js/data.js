@@ -877,8 +877,11 @@ class DataManager {
         if (monthsSet.size > 0) {
             let months = Array.from(monthsSet);
 
-            // Thêm "Kỳ này" (tháng hiện tại) nếu không lọc theo năm
-            if (!filterYear) {
+            // Thêm "Kỳ này" (tháng hiện tại) nếu:
+            // - Không lọc theo năm (Tất cả các năm)
+            // - Chu kỳ là calendar hoặc startDay === 1 (tháng dương lịch)
+            // Với chu kỳ thanh toán tùy chỉnh, để generateBillingPeriods xử lý
+            if (!filterYear && (billingCycle.type === 'calendar' || billingCycle.startDay === 1)) {
                 const currentDate = new Date();
                 const currentMonthYear = `${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-${currentDate.getFullYear()}`;
                 // Chỉ thêm nếu chưa có trong danh sách
