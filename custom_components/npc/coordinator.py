@@ -83,22 +83,34 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             all_daily_data = []
             current_start = start_date_daily
+            batch_count = 0
+
+            _LOGGER.info(f"Starting daily data sync from {start_date_daily.strftime('%d/%m/%Y')} to {today.strftime('%d/%m/%Y')}")
 
             while current_start < today:
                 current_end = min(current_start + timedelta(days=batch_days - 1), today)
                 from_date_str = current_start.strftime("%d/%m/%Y")
                 to_date_str = current_end.strftime("%d/%m/%Y")
+                batch_count += 1
 
-                _LOGGER.debug(f"Fetching daily data from {from_date_str} to {to_date_str}")
+                _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date_str} to {to_date_str}")
                 daily_data = await self.api.get_chisongay(from_date_str, to_date_str)
 
                 if daily_data and daily_data.get("data"):
+                    batch_records = len(daily_data["data"])
                     all_daily_data.extend(daily_data["data"])
+                    _LOGGER.info(f"Batch {batch_count}: Received {batch_records} daily records")
+                else:
+                    _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date_str} to {to_date_str}")
 
                 current_start = current_end + timedelta(days=1)
 
             if all_daily_data:
+                _LOGGER.info(f"Total daily data collected: {len(all_daily_data)} records")
                 await self._save_daily_data(all_daily_data)
+                _LOGGER.info(f"Daily data sync completed for {self.customer_id}")
+            else:
+                _LOGGER.warning(f"No daily data collected for {self.customer_id}")
 
             # 5. Fetch bill data (hóa đơn)
             bill_data = await self.api.get_hoadon()
@@ -204,19 +216,25 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         """Identify missing monthly periods only from 2025 to now.
         Chỉ lấy những tháng chưa có dữ liệu tiêu thụ (san_luong_kwh) hoặc thiếu dữ liệu.
         Đặc biệt ưu tiên đồng bộ lại các tháng từ 01/2025-05/2025 nếu bị thiếu.
+        Chỉ lấy đến tháng trước tháng hiện tại (tháng hiện tại chưa hết kỳ).
         """
         missing = []
         today = datetime.now()
 
-        # Chỉ lấy từ tháng 1/2025 đến hiện tại
+        # Chỉ lấy từ tháng 1/2025 đến tháng trước tháng hiện tại
         first_month = datetime(2025, 1, 1)
-        current_month = datetime(today.year, today.month, 1)
+        
+        # Tính tháng trước tháng hiện tại (tháng hiện tại chưa hết kỳ nên không lấy)
+        if today.month == 1:
+            last_month = datetime(today.year - 1, 12, 1)
+        else:
+            last_month = datetime(today.year, today.month - 1, 1)
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         month_cursor = first_month
-        while month_cursor <= current_month:
+        while month_cursor <= last_month:
             month = month_cursor.month
             year = month_cursor.year
 
@@ -347,6 +365,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
     async def _save_daily_data(self, data: list):
         """Save daily consumption data to database."""
         if not data:
+            _LOGGER.warning(f"No daily data to save for {self.customer_id}")
             return
 
         try:
@@ -370,12 +389,22 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # So reverse the list first, then sort by date to be safe
             sorted_data = sorted(data, key=lambda x: self._parse_date_for_sort(record=x))
             
+            _LOGGER.info(f"Processing {len(sorted_data)} daily records for {self.customer_id}")
+            
             prev_chi_so = None
             prev_ngay = None
+            saved_count = 0
+            skipped_count = 0
             
             for record in sorted_data:
                 # Parse date from record (format may vary)
                 ngay = self._parse_date(record)
+                
+                if not ngay:
+                    _LOGGER.debug(f"Skipping record without valid date: {record}")
+                    skipped_count += 1
+                    continue
+                    
                 # Try multiple field names for chi_so
                 chi_so = self._parse_float(
                     record.get("CHISO_MOI") or 
@@ -442,12 +471,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     VALUES (?, ?, ?, ?)
                 """, (self.customer_id, ngay, chi_so, dien_tieu_thu))
                 
+                saved_count += 1
                 prev_chi_so = chi_so
                 prev_ngay = ngay
 
             conn.commit()
             conn.close()
-            _LOGGER.debug(f"Saved {len(data)} daily records for {self.customer_id}")
+            _LOGGER.info(f"Saved {saved_count} daily records for {self.customer_id}, skipped {skipped_count}")
 
         except Exception as e:
             _LOGGER.error(f"Error saving daily data: {e}", exc_info=True)
@@ -516,13 +546,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             if san_luong is not None and san_luong > 0:
                 # INSERT OR REPLACE: tạo hoặc cập nhật hàng (giữ nguyên tien_dien nếu đã có)
+                # Sử dụng UPSERT pattern: INSERT nếu chưa có, UPDATE nếu đã có
                 cursor.execute("""
-                    INSERT OR REPLACE INTO monthly_bill 
-                    (userevn, thang, nam, tien_dien, san_luong_kwh)
-                    VALUES (?, ?, 
-                        COALESCE((SELECT tien_dien FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ?), NULL),
-                        ?)
-                """, (self.customer_id, month, year, self.customer_id, month, year, san_luong))
+                    INSERT INTO monthly_bill (userevn, thang, nam, tien_dien, san_luong_kwh)
+                    VALUES (?, ?, ?, NULL, ?)
+                    ON CONFLICT(userevn, thang, nam) 
+                    DO UPDATE SET san_luong_kwh = excluded.san_luong_kwh,
+                                  tien_dien = COALESCE(monthly_bill.tien_dien, excluded.tien_dien)
+                """, (self.customer_id, month, year, san_luong))
                 
                 _LOGGER.info(f"Saved monthly data for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
             else:
@@ -756,6 +787,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         # NPC API returns "NGAY" field with format "dd/mm/yyyy"
         date_fields = [
             "NGAY", "ngay",  # Most common for NPC API
+            "ngayFull", "ngay_full",  # HCMC format
+            "strTime", "str_time",  # SPC format
             "NGAY_DO", "ngay_do", "NGAY_DO_CS", "ngay_do_cs",
             "THOI_DIEM", "thoi_diem",  # NPC also has THOI_DIEM field
             "THOI_GIAN", "thoi_gian",
@@ -768,6 +801,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 date_str = str(record[field]).strip()
                 if not date_str or date_str.lower() in ['null', 'none', '']:
                     continue
+                
+                _LOGGER.debug(f"Trying to parse date from field '{field}': '{date_str}'")
                 
                 # Handle THOI_DIEM format: "24/01/2026 00:33" -> extract date part
                 if field in ["THOI_DIEM", "thoi_diem"] and ' ' in date_str:
@@ -833,11 +868,44 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _parse_date_for_sort(self, record: Dict) -> datetime:
         """Parse date for sorting purposes."""
-        date_str = self._parse_date(record)
-        try:
-            return datetime.strptime(date_str, "%d-%m-%Y")
-        except:
-            return datetime.now()
+        # Try to extract date from various fields
+        date_fields = [
+            "NGAY", "ngay", "ngayFull", "ngay_full", "strTime", "str_time",
+            "NGAY_DO", "ngay_do", "NGAY_DO_CS", "ngay_do_cs",
+            "THOI_DIEM", "thoi_diem", "THOI_GIAN", "thoi_gian",
+            "NGAY_BAT_DAU", "ngay_bat_dau", "NGAY_KET_THUC", "ngay_ket_thuc"
+        ]
+        
+        for field in date_fields:
+            if field in record:
+                date_str = str(record[field]).strip()
+                if not date_str or date_str.lower() in ['null', 'none', '']:
+                    continue
+                
+                try:
+                    # Handle THOI_DIEM format: "24/01/2026 00:33" -> extract date part
+                    if field in ["THOI_DIEM", "thoi_diem"] and ' ' in date_str:
+                        date_str = date_str.split(' ')[0]
+                    
+                    # Try dd/mm/yyyy (most common for NPC API)
+                    if len(date_str) == 10 and date_str[2] == '/':
+                        return datetime.strptime(date_str, "%d/%m/%Y")
+                    # Try yyyy-mm-dd
+                    elif len(date_str) == 10 and date_str[4] == '-':
+                        return datetime.strptime(date_str, "%Y-%m-%d")
+                    # Already dd-mm-yyyy
+                    elif len(date_str) == 10 and date_str[2] == '-':
+                        return datetime.strptime(date_str, "%d-%m-%Y")
+                    # Try yyyymmdd
+                    elif len(date_str) == 8 and date_str.isdigit():
+                        return datetime.strptime(date_str, "%Y%m%d")
+                except Exception as e:
+                    _LOGGER.debug(f"Error parsing date for sort from field {field}: {e}")
+                    continue
+        
+        # Default to today if parsing fails
+        _LOGGER.debug(f"Could not parse date for sort from record: {record}, using today")
+        return datetime.now()
 
     def _parse_float(self, value: Any) -> Optional[float]:
         """Parse float value from various formats."""
