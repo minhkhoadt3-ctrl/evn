@@ -389,7 +389,7 @@ class EVNDebugDataView(HomeAssistantView):
             hass = request.app["hass"]
             conn = await hass.async_add_executor_job(get_db_conn)
             cursor = conn.cursor()
-            
+
             # Lấy tất cả dữ liệu từ monthly_bill
             cursor.execute(
                 "SELECT thang, nam, tien_dien, san_luong_kwh FROM monthly_bill WHERE userevn=? ORDER BY nam ASC, thang ASC",
@@ -397,6 +397,78 @@ class EVNDebugDataView(HomeAssistantView):
             )
             rows = cursor.fetchall()
             conn.close()
+
+            return web.json_response({
+                "monthly_data": [
+                    {"thang": row[0], "nam": row[1], "tien_dien": row[2], "san_luong_kwh": row[3]}
+                    for row in rows
+                ]
+            })
+
+        except Exception as ex:
+            _LOGGER.debug("Error debugging data for %s: %s", account, str(ex), exc_info=True)
+            return web.json_response(
+                {"error": "Internal server error"},
+                status=500
+            )
+
+
+class EVNResyncView(HomeAssistantView):
+    """View to force resync all data for an account."""
+
+    url = "/api/npc/resync/{account}"
+    name = "api:npc:resync"
+    requires_auth = True
+
+    def __init__(self, hass):
+        """Initialize the view."""
+        self.hass = hass
+
+    async def post(self, request, account):
+        """Force resync all data for account."""
+        try:
+            hass = request.app["hass"]
+            # Get coordinator for this account
+            domain_data = hass.data.get(DOMAIN, {})
+            coordinator_data = None
+
+            for entry_id, data in domain_data.items():
+                if entry_id == "api_registered" or entry_id == "panel_registered":
+                    continue
+                if data.get("customer_id") == account:
+                    coordinator_data = data
+                    break
+
+            if not coordinator_data:
+                return web.json_response(
+                    {"error": "Account not found"},
+                    status=404
+                )
+
+            coordinator = coordinator_data.get("coordinator")
+            if not coordinator:
+                return web.json_response(
+                    {"error": "Coordinator not found"},
+                    status=404
+                )
+
+            # Force resync
+            await self.hass.async_add_executor_job(coordinator.force_resync_all_data)
+
+            # Trigger immediate refresh
+            await coordinator.async_refresh()
+
+            return web.json_response({
+                "status": "success",
+                "message": f"Force resync initiated for {account}"
+            })
+
+        except Exception as ex:
+            _LOGGER.debug("Error force resync for %s: %s", account, str(ex), exc_info=True)
+            return web.json_response(
+                {"error": "Internal server error"},
+                status=500
+            )
             
             monthly_data = []
             for row in rows:

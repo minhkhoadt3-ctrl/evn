@@ -74,9 +74,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
 
             # 4. Fetch daily data - chỉ lấy những ngày còn thiếu
-            # Remove stale local history outside the same 24-month retention
-            # window so old rows (e.g. 2016) cannot keep appearing in sensors.
-            await self.hass.async_add_executor_job(self._cleanup_history_retention)
+            # Tạm thời disable cleanup retention để tránh mất dữ liệu
+            # await self.hass.async_add_executor_job(self._cleanup_history_retention)
 
             # Use executor to check missing daily data
             missing_days = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
@@ -217,7 +216,6 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
     def _get_missing_monthly_periods(self):
         """Identify missing monthly periods only from 2025 to now.
         Chỉ lấy những tháng chưa có dữ liệu tiêu thụ (san_luong_kwh).
-        Những tháng đã có từ hóa đơn (có cả tien_dien và san_luong_kwh) sẽ không lấy lại.
         """
         missing = []
         today = datetime.now()
@@ -242,8 +240,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     month_cursor = datetime(month_cursor.year, month_cursor.month + 1, 1)
                 continue
 
-            # Kiểm tra tháng đã có đủ dữ liệu chưa (ưu tiên từ hóa đơn)
-            # Nếu đã có cả tien_dien và san_luong_kwh → coi như đã đủ, không lấy lại
+            # Kiểm tra tháng đã có san_luong_kwh chưa
             cursor.execute(
                 "SELECT 1 FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ? AND san_luong_kwh IS NOT NULL",
                 (self.customer_id, month, year)
@@ -326,6 +323,19 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
         conn.close()
         return missing
+
+    def force_resync_all_data(self):
+        """Force resync all data from 2025 to now (tạm thời để khôi phục dữ liệu)."""
+        # Xóa toàn bộ dữ liệu để sync lại từ đầu
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM daily_consumption WHERE userevn = ?", (self.customer_id,))
+        cursor.execute("DELETE FROM monthly_bill WHERE userevn = ?", (self.customer_id,))
+
+        conn.commit()
+        conn.close()
+        _LOGGER.info(f"Force resync: Deleted all data for {self.customer_id}, will sync from scratch")
 
     async def _save_daily_data(self, data: list):
         """Save daily consumption data to database."""
