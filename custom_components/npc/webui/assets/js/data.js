@@ -766,18 +766,28 @@ class DataManager {
             ? totalMonthlyConsumption / monthCount
             : 0;
 
-        // Trung bình hàng ngày
-        const validDailyData = filteredDailyData.filter(day => {
-            const value = day["Điện tiêu thụ (kWh)"];
-            return value && (typeof value === 'number' ? value > 0 : parseFloat(value) > 0);
-        });
-        const totalDailyConsumption = validDailyData.reduce((sum, day) => {
-            const value = day["Điện tiêu thụ (kWh)"];
-            return sum + (typeof value === 'number' ? value : parseFloat(value) || 0);
-        }, 0);
-        const avgDailyConsumption = validDailyData.length > 0
-            ? totalDailyConsumption / validDailyData.length
-            : 0;
+        // Trung bình hàng ngày - ƯU TIÊN TÍNH TỪ DỮ LIỆU THÁNG
+        // Chỉ dùng dailyData nếu không có dữ liệu tháng
+        let avgDailyConsumption = 0;
+        
+        if (monthCount > 0 && totalMonthlyConsumption > 0) {
+            // Tính trung bình hàng ngày từ dữ liệu tháng (chính xác hơn)
+            // Giả sử trung bình 30 ngày/tháng
+            avgDailyConsumption = totalMonthlyConsumption / (monthCount * 30);
+        } else {
+            // Fallback: Tính từ dailyData nếu không có dữ liệu tháng
+            const validDailyData = filteredDailyData.filter(day => {
+                const value = day["Điện tiêu thụ (kWh)"];
+                return value && (typeof value === 'number' ? value > 0 : parseFloat(value) > 0);
+            });
+            const totalDailyConsumption = validDailyData.reduce((sum, day) => {
+                const value = day["Điện tiêu thụ (kWh)"];
+                return sum + (typeof value === 'number' ? value : parseFloat(value) || 0);
+            }, 0);
+            avgDailyConsumption = validDailyData.length > 0
+                ? totalDailyConsumption / validDailyData.length
+                : 0;
+        }
 
         // Tính toán kỳ hiện tại (chỉ khi đang xem năm hiện tại hoặc tất cả)
         const currentYear = new Date().getFullYear();
