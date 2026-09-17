@@ -582,26 +582,8 @@ class DataManager {
             return { year, month };
         };
 
-        // ƯU TIÊN: Tính sản lượng từ dailyData theo chu kỳ thanh toán
-        // Chỉ dùng monthlyData nếu không có dailyData cho kỳ đó
-        if (Array.isArray(this.dailyData)) {
-            this.dailyData.forEach(day => {
-                const date = parseDailyDate(day?.Ngày);
-                if (!date || date > new Date()) return;
-                const period = getPeriodKey(date);
-                if (targetYear !== null && period.year !== targetYear) return;
-                const key = `${period.year}-${period.month}`;
-
-                const raw = day["Điện tiêu thụ (kWh)"];
-                const value = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
-                if (!Number.isFinite(value) || value < 0) return;
-                const entry = monthlyMap.get(key) || { Tháng: period.month, Năm: period.year, consumption: 0 };
-                entry.consumption += value;
-                monthlyMap.set(key, entry);
-            });
-        }
-
-        // Bổ sung từ monthlyData cho các kỳ không có dailyData
+        // ƯU TIÊN ĐẦU TIÊN: Dùng monthlyData từ API (chính xác nhất)
+        // Chỉ dùng dailyData để bổ sung nếu monthlyData thiếu
         if (Array.isArray(monthlyData.SanLuong) && monthlyData.SanLuong.length > 0) {
             monthlyData.SanLuong.forEach(item => {
                 const year = this.normalizeYearValue(item?.Năm);
@@ -612,12 +594,30 @@ class DataManager {
                 if (targetYear !== null && year !== targetYear) return;
                 const key = `${year}-${month}`;
 
-                // Chỉ dùng monthlyData nếu dailyData không có kỳ đó
-                if (monthlyMap.has(key)) return;
-
                 const raw = item["Điện tiêu thụ (KWh)"];
                 const consumption = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
                 monthlyMap.set(key, { Tháng: month, Năm: year, consumption });
+            });
+        }
+
+        // Bổ sung từ dailyData chỉ cho các kỳ không có trong monthlyData
+        if (Array.isArray(this.dailyData)) {
+            this.dailyData.forEach(day => {
+                const date = parseDailyDate(day?.Ngày);
+                if (!date || date > new Date()) return;
+                const period = getPeriodKey(date);
+                if (targetYear !== null && period.year !== targetYear) return;
+                const key = `${period.year}-${period.month}`;
+
+                // Chỉ bổ sung nếu monthlyData không có kỳ đó
+                if (monthlyMap.has(key)) return;
+
+                const raw = day["Điện tiêu thụ (kWh)"];
+                const value = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
+                if (!Number.isFinite(value) || value < 0) return;
+                const entry = monthlyMap.get(key) || { Tháng: period.month, Năm: period.year, consumption: 0 };
+                entry.consumption += value;
+                monthlyMap.set(key, entry);
             });
         }
 
