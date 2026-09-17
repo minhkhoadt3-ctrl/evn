@@ -835,6 +835,27 @@ class DataManager {
 
         return '';
     }    // Lấy các tháng duy nhất từ dữ liệu (hỗ trợ chu kỳ thanh toán)
+    getLatestDataDate() {
+        if (!this.dailyData || !Array.isArray(this.dailyData) || this.dailyData.length === 0) {
+            return null;
+        }
+
+        let latestDate = null;
+        this.dailyData.forEach(day => {
+            if (!day.Ngày) return;
+            try {
+                const dayDate = new Date(day.Ngày.split('-').reverse().join('-'));
+                if (!latestDate || dayDate > latestDate) {
+                    latestDate = dayDate;
+                }
+            } catch (e) {
+                // Bỏ qua ngày không hợp lệ
+            }
+        });
+
+        return latestDate;
+    }
+
     getUniqueMonths(filterYear = null) {
         const billingCycle = this.getBillingCycle();
         console.log('📅 getUniqueMonths - billing cycle:', billingCycle);
@@ -877,17 +898,32 @@ class DataManager {
         if (monthsSet.size > 0) {
             let months = Array.from(monthsSet);
 
-            // Thêm "Kỳ này" (tháng hiện tại) nếu:
-            // - Không lọc theo năm (Tất cả các năm)
-            // - Chu kỳ là calendar hoặc startDay === 1 (tháng dương lịch)
-            // Với chu kỳ thanh toán tùy chỉnh, để generateBillingPeriods xử lý
-            if (!filterYear && (billingCycle.type === 'calendar' || billingCycle.startDay === 1)) {
-                const currentDate = new Date();
-                const currentMonthYear = `${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-${currentDate.getFullYear()}`;
-                // Chỉ thêm nếu chưa có trong danh sách
-                if (!months.includes(currentMonthYear)) {
-                    months.push(currentMonthYear);
-                    console.log('📅 Added current period (Kỳ này):', currentMonthYear);
+            // Thêm tháng kết thúc kỳ dựa trên data gần nhất nếu không lọc theo năm
+            if (!filterYear) {
+                // Tìm data gần nhất
+                const latestDataDate = this.getLatestDataDate();
+                if (latestDataDate) {
+                    // Tính tháng kết thúc kỳ dựa trên chu kỳ thanh toán
+                    let displayMonth, displayYear;
+
+                    if (billingCycle.type === 'calendar' || billingCycle.startDay === 1) {
+                        // Chu kỳ dương lịch: dùng tháng của data gần nhất
+                        displayMonth = latestDataDate.getMonth() + 1;
+                        displayYear = latestDataDate.getFullYear();
+                    } else {
+                        // Chu kỳ thanh toán tùy chỉnh: tính tháng kết thúc kỳ
+                        const periodInfo = this.tinhngaydauky(billingCycle.startDay, latestDataDate);
+                        displayMonth = periodInfo.end_ky.getMonth() + 1;
+                        displayYear = periodInfo.end_ky.getFullYear();
+                    }
+
+                    const latestMonthYear = `${displayMonth.toString().padStart(2, '0')}-${displayYear}`;
+
+                    // Chỉ thêm nếu chưa có trong danh sách
+                    if (!months.includes(latestMonthYear)) {
+                        months.push(latestMonthYear);
+                        console.log('📅 Added period month based on latest data:', latestMonthYear);
+                    }
                 }
             }
 
