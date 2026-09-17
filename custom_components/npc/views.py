@@ -209,16 +209,19 @@ class EVNMonthlyDataView(HomeAssistantView):
                         tien_dien_float = 0
                     nam_int = int(nam) if nam is not None else datetime.now().year
                     
-                    monthly_data["SanLuong"].append({
-                        "Tháng": thang_int,
-                        "Năm": nam_int,
-                        "Điện tiêu thụ (KWh)": san_luong_float
-                    })
-                    monthly_data["TienDien"].append({
-                        "Tháng": thang_int,
-                        "Năm": nam_int,
-                        "Tiền Điện": tien_dien_float
-                    })
+                    # Chỉ thêm vào kết quả nếu có ít nhất san_luong hoặc tien_dien
+                    if san_luong_float > 0 or tien_dien_float > 0:
+                        monthly_data["SanLuong"].append({
+                            "Tháng": thang_int,
+                            "Năm": nam_int,
+                            "Điện tiêu thụ (KWh)": san_luong_float
+                        })
+                        monthly_data["TienDien"].append({
+                            "Tháng": thang_int,
+                            "Năm": nam_int,
+                            "Tiền Điện": tien_dien_float
+                        })
+                        _LOGGER.debug(f"Added monthly data: {thang_int}/{nam_int} - san_luong={san_luong_float}, tien={tien_dien_float}")
                 except Exception as bill_ex:
                     _LOGGER.debug("Error processing bill %s: %s", bill, str(bill_ex))
                     continue
@@ -465,6 +468,100 @@ class EVNResyncView(HomeAssistantView):
 
         except Exception as ex:
             _LOGGER.debug("Error force resync for %s: %s", account, str(ex), exc_info=True)
+            return web.json_response(
+                {"error": "Internal server error"},
+                status=500
+            )
+
+
+class EVNResyncMonthsView(HomeAssistantView):
+    """View to force resync specific months for an account."""
+
+    url = "/api/npc/resync_months/{account}"
+    name = "api:npc:resync_months"
+    requires_auth = True
+
+    def __init__(self, hass):
+        """Initialize the view."""
+        self.hass = hass
+
+    async def post(self, request, account):
+        """Force resync specific months for account."""
+        try:
+            hass = request.app["hass"]
+            # Get coordinator for this account
+            domain_data = hass.data.get(DOMAIN, {})
+            coordinator_data = None
+
+            for entry_id, data in domain_data.items():
+                if entry_id == "api_registered" or entry_id == "panel_registered":
+                    continue
+                if data.get("customer_id") == account:
+                    coordinator_data = data
+                    break
+
+            if not coordinator_data:
+                return web.json_response(
+                    {"error": "Account not found"},
+                    status=404
+                )
+
+            coordinator = coordinator_data.get("coordinator")
+            if not coordinator:
+                return web.json_response(
+                    {"error": "Coordinator not found"},
+                    status=404
+                )
+
+            # Parse request body for months to resync
+            try:
+                body = await request.json()
+                months = body.get("months", [])
+            except Exception:
+                return web.json_response(
+                    {"error": "Invalid JSON body"},
+                    status=400
+                )
+
+            if not months:
+                return web.json_response(
+                    {"error": "No months specified"},
+                    status=400
+                )
+
+            # Delete specific months from database
+            conn = await hass.async_add_executor_job(get_db_conn)
+            cursor = conn.cursor()
+            
+            deleted_count = 0
+            for month_data in months:
+                try:
+                    month = month_data.get("month")
+                    year = month_data.get("year")
+                    if month and year:
+                        cursor.execute(
+                            "DELETE FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ?",
+                            (account, month, year)
+                        )
+                        deleted_count += cursor.rowcount
+                        _LOGGER.info(f"Deleted monthly data for {account}, {month}/{year}")
+                except Exception as e:
+                    _LOGGER.error(f"Error deleting month {month_data}: {e}")
+            
+            conn.commit()
+            conn.close()
+
+            # Trigger refresh to sync deleted months
+            await coordinator.async_refresh()
+
+            return web.json_response({
+                "status": "success",
+                "message": f"Resync initiated for {deleted_count} months",
+                "deleted_count": deleted_count
+            })
+
+        except Exception as ex:
+            _LOGGER.debug("Error force resync months for %s: %s", account, str(ex), exc_info=True)
             return web.json_response(
                 {"error": "Internal server error"},
                 status=500

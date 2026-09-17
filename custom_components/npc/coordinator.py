@@ -112,12 +112,17 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
+            
+            _LOGGER.info(f"Found {len(missing_periods)} missing monthly periods for {self.customer_id}")
 
             for month, year in missing_periods:
-                _LOGGER.debug(f"Fetching missing monthly data for {month}/{year}")
+                _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
                 m_data = await self.api.get_chisothang(month, year)
                 if m_data and m_data.get("data"):
                     await self._save_monthly_data(m_data["data"], month, year)
+                    _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
+                else:
+                    _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
 
             # 7. Power outage was synchronized at the start of this update cycle.
 
@@ -197,7 +202,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _get_missing_monthly_periods(self):
         """Identify missing monthly periods only from 2025 to now.
-        Chỉ lấy những tháng chưa có dữ liệu tiêu thụ (san_luong_kwh).
+        Chỉ lấy những tháng chưa có dữ liệu tiêu thụ (san_luong_kwh) hoặc thiếu dữ liệu.
+        Đặc biệt ưu tiên đồng bộ lại các tháng từ 01/2025-05/2025 nếu bị thiếu.
         """
         missing = []
         today = datetime.now()
@@ -224,11 +230,29 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             # Kiểm tra tháng đã có san_luong_kwh chưa
             cursor.execute(
-                "SELECT 1 FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ? AND san_luong_kwh IS NOT NULL",
+                "SELECT san_luong_kwh, tien_dien FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ?",
                 (self.customer_id, month, year)
             )
-            if not cursor.fetchone():
+            row = cursor.fetchone()
+            
+            # Thêm vào missing nếu:
+            # 1. Không có record nào
+            # 2. Không có san_luong_kwh
+            # 3. Cả san_luong_kwh và tien_dien đều là NULL
+            should_add = False
+            if not row:
+                should_add = True
+            else:
+                san_luong = row[0]
+                tien_dien = row[1]
+                if san_luong is None and tien_dien is None:
+                    should_add = True
+                elif san_luong is None or san_luong == 0:
+                    should_add = True
+            
+            if should_add:
                 missing.append((month, year))
+                _LOGGER.debug(f"Added missing period: {month}/{year} - san_luong={row[0] if row else None}, tien_dien={row[1] if row else None}")
 
             if month_cursor.month == 12:
                 month_cursor = datetime(month_cursor.year + 1, 1, 1)
@@ -314,6 +338,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
         cursor.execute("DELETE FROM daily_consumption WHERE userevn = ?", (self.customer_id,))
         cursor.execute("DELETE FROM monthly_bill WHERE userevn = ?", (self.customer_id,))
+        cursor.execute("DELETE FROM current_period WHERE userevn = ?", (self.customer_id,))
 
         conn.commit()
         conn.close()
@@ -459,23 +484,29 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 # Get from first record
                 record = data[0]
                 
-                # Điện tiêu thụ từ DIEN_TTHU
+                # Điện tiêu thụ từ DIEN_TTHU hoặc ChiSoThang
                 san_luong = self._parse_float(
                     record.get("DIEN_TTHU") or
                     record.get("dien_tthu") or
                     record.get("SAN_LUONG") or
-                    record.get("san_luong")
+                    record.get("san_luong") or
+                    record.get("ChiSoThang") or
+                    record.get("chiSoThang")
                 )
                 
                 # Nếu không có, tính từ CHISO_MOI - CHISO_CU
                 if san_luong is None:
                     chi_so_moi = self._parse_float(
                         record.get("CHISO_MOI") or 
-                        record.get("chi_so_moi")
+                        record.get("chi_so_moi") or
+                        record.get("ChiSoCuoi") or
+                        record.get("chiSoCuoi")
                     )
                     chi_so_cu = self._parse_float(
                         record.get("CHISO_CU") or 
-                        record.get("chi_so_cu")
+                        record.get("chi_so_cu") or
+                        record.get("ChiSoDau") or
+                        record.get("chiSoDau")
                     )
                     if chi_so_moi is not None and chi_so_cu is not None:
                         san_luong = chi_so_moi - chi_so_cu
@@ -483,22 +514,22 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 # Tiền điện không có trong chisothang, sẽ lấy từ hoadon
                 # Chỉ lưu san_luong ở đây
 
-            if san_luong is not None:
-                # INSERT OR IGNORE: chỉ tạo hàng mới nếu chưa tồn tại (giữ nguyên tien_dien)
+            if san_luong is not None and san_luong > 0:
+                # INSERT OR REPLACE: tạo hoặc cập nhật hàng (giữ nguyên tien_dien nếu đã có)
                 cursor.execute("""
-                    INSERT OR IGNORE INTO monthly_bill 
+                    INSERT OR REPLACE INTO monthly_bill 
                     (userevn, thang, nam, tien_dien, san_luong_kwh)
-                    VALUES (?, ?, NULL, ?, ?)
-                """, (self.customer_id, month, year, san_luong))
-                # UPDATE riêng san_luong_kwh: không bao giờ xóa tien_dien đã có từ hoadon
-                cursor.execute("""
-                    UPDATE monthly_bill SET san_luong_kwh = ?
-                    WHERE userevn = ? AND thang = ? AND nam = ?
-                """, (san_luong, self.customer_id, month, year))
+                    VALUES (?, ?, 
+                        COALESCE((SELECT tien_dien FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ?), NULL),
+                        ?)
+                """, (self.customer_id, month, year, self.customer_id, month, year, san_luong))
+                
+                _LOGGER.info(f"Saved monthly data for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
+            else:
+                _LOGGER.warning(f"Invalid san_luong for {self.customer_id}, {month}/{year}: {san_luong}")
 
             conn.commit()
             conn.close()
-            _LOGGER.debug(f"Saved monthly data for {self.customer_id}, {month}/{year}")
 
         except Exception as e:
             _LOGGER.error(f"Error saving monthly data: {e}", exc_info=True)
