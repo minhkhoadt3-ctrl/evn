@@ -73,53 +73,17 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     exc_info=True,
                 )
 
-            # 4. Fetch daily data in batches of 90 days (có thể lấy cả năm trong app).
-            # Chỉ lấy từ 01/01/2025 đến hiện tại
-            start_date_daily = datetime(2025, 1, 1)
-            batch_days = 90
-
-            # Tạm thời disable cleanup retention để tránh mất dữ liệu
-            # await self.hass.async_add_executor_job(self._cleanup_history_retention)
-
-            all_daily_data = []
-            current_start = start_date_daily
-            batch_count = 0
-
-            _LOGGER.info(f"Starting daily data sync from {start_date_daily.strftime('%d/%m/%Y')} to {today.strftime('%d/%m/%Y')}")
-
-            while current_start < today:
-                current_end = min(current_start + timedelta(days=batch_days - 1), today)
-                from_date_str = current_start.strftime("%d/%m/%Y")
-                to_date_str = current_end.strftime("%d/%m/%Y")
-                batch_count += 1
-
-                _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date_str} to {to_date_str}")
-                daily_data = await self.api.get_chisongay(from_date_str, to_date_str)
-
-                if daily_data and daily_data.get("data"):
-                    batch_records = len(daily_data["data"])
-                    all_daily_data.extend(daily_data["data"])
-                    _LOGGER.info(f"Batch {batch_count}: Received {batch_records} daily records")
-                else:
-                    _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date_str} to {to_date_str}")
-
-                current_start = current_end + timedelta(days=1)
-
-            if all_daily_data:
-                _LOGGER.info(f"Total daily data collected: {len(all_daily_data)} records")
-                await self._save_daily_data(all_daily_data)
-                _LOGGER.info(f"Daily data sync completed for {self.customer_id}")
-            else:
-                _LOGGER.warning(f"No daily data collected for {self.customer_id}")
-
-            # 5. Fetch bill data (hóa đơn)
+            # 4. Fetch bill data (hóa đơn) - ƯU TIÊN ĐẦU TIÊN
+            # Dữ liệu hóa đơn từ API là chính xác nhất, ưu tiên trước daily data
             bill_data = await self.api.get_hoadon()
             if bill_data and bill_data.get("data"):
                 _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
                 await self._save_bill_data(bill_data["data"])
                 await self._save_hoadon_to_monthly_bill(bill_data["data"])
+                _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
 
-            # 6. Fetch monthly history data (History from 2016 to now)
+            # 5. Fetch monthly history data (History from 2016 to now) - ƯU TIÊN THỨ HAI
+            # Dữ liệu chisothang từ API cũng chính xác, ưu tiên trước daily data
             _LOGGER.info(f"Syncing monthly history for {self.customer_id}")
 
             # Use executor to check missing data
@@ -135,6 +99,47 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
                 else:
                     _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
+
+            # 6. Fetch daily data in batches of 90 days (có thể lấy cả năm trong app).
+            # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
+            # Chỉ lấy từ 01/01/2025 đến hiện tại
+            start_date_daily = datetime(2025, 1, 1)
+            batch_days = 90
+
+            # Tạm thời disable cleanup retention để tránh mất dữ liệu
+            # await self.hass.async_add_executor_job(self._cleanup_history_retention)
+
+            all_daily_data = []
+            current_start = start_date_daily
+            batch_count = 0
+            failed_batches = 0
+
+            _LOGGER.info(f"Starting daily data sync from {start_date_daily.strftime('%d/%m/%Y')} to {today.strftime('%d/%m/%Y')}")
+
+            while current_start < today:
+                current_end = min(current_start + timedelta(days=batch_days - 1), today)
+                from_date_str = current_start.strftime("%d/%m/%Y")
+                to_date_str = current_end.strftime("%d/%m/%Y")
+                batch_count += 1
+
+                _LOGGER.debug(f"Fetching daily data batch {batch_count}: {from_date_str} to {to_date_str}")
+                daily_data = await self.api.get_chisongay(from_date_str, to_date_str)
+
+                if daily_data and daily_data.get("data"):
+                    batch_records = len(daily_data["data"])
+                    all_daily_data.extend(daily_data["data"])
+                    _LOGGER.debug(f"Batch {batch_count}: Received {batch_records} daily records")
+                else:
+                    failed_batches += 1
+                    _LOGGER.debug(f"Batch {batch_count}: No data received for {from_date_str} to {to_date_str}")
+
+                current_start = current_end + timedelta(days=1)
+
+            if all_daily_data:
+                _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
+                await self._save_daily_data(all_daily_data)
+            else:
+                _LOGGER.warning(f"No daily data collected for {self.customer_id}, failed batches: {failed_batches}")
 
             # 7. Power outage was synchronized at the start of this update cycle.
 

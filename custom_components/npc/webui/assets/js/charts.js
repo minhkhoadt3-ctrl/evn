@@ -478,97 +478,30 @@ class ChartManager {
         const ctx = document.getElementById('comparisonChart');
         if (!ctx) return;
 
-        // So sánh sản lượng phải dùng đúng CHU KỲ điện lực.
-        // CONF_NGAYDAUKY được load từ /api/npc/options và truyền qua options.billingCycles.
-        // Ví dụ startDay=26:
-        //   T07/2026 = 26/06/2026 -> 25/07/2026
-        //   T08/2026 = 26/07/2026 -> 25/08/2026
-        // Không dùng monthly.SanLuong ở đây vì dữ liệu monthly có thể chứa
-        // kỳ bị lệch/trùng theo tháng lịch.
-        const billingCycles = options.billingCycles || {};
-        const defaultCycle = { startDay: 1, type: 'calendar' };
-
-        const parseDailyDate = (value) => {
-            if (!value) return null;
-            const parts = String(value).split('-').map(Number);
-            if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
-            const [day, month, year] = parts;
-            const d = new Date(year, month - 1, day);
-            return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day
-                ? d : null;
-        };
-
-        const getCycle = (accId) => {
-            const c = billingCycles[accId] || defaultCycle;
-            const startDay = Math.max(1, Math.min(31, parseInt(c.startDay, 10) || 1));
-            return { startDay, type: startDay > 1 ? 'cycle' : 'calendar' };
-        };
-
-        // Trả về năm/tháng của KỲ (theo tháng kết thúc kỳ) cho một ngày tiêu thụ.
-        const getPeriodKey = (date, startDay) => {
-            if (startDay === 1) {
-                return { year: date.getFullYear(), month: date.getMonth() + 1 };
-            }
-
-            let endMonth = date.getMonth();
-            let endYear = date.getFullYear();
-
-            // Ngày >= ngày đầu kỳ => kỳ kết thúc vào tháng sau.
-            // Ngày < ngày đầu kỳ => kỳ kết thúc trong tháng hiện tại.
-            if (date.getDate() >= startDay) {
-                endMonth += 1;
-                if (endMonth > 11) {
-                    endMonth = 0;
-                    endYear += 1;
-                }
-            }
-
-            return { year: endYear, month: endMonth + 1 };
-        };
-
-        const now = new Date();
-        now.setHours(23, 59, 59, 999);
-
-        // Tính các kỳ đã HOÀN THÀNH từ dữ liệu ngày của từng công tơ.
-        // periodData[accountId]["YYYY-M"] = tổng kWh trong kỳ.
-        const periodData = {};
+        // Sử dụng dữ liệu monthly thay vì tính lại từ daily
+        // Điều này đảm bảo cả hai biểu đồ dùng cùng nguồn dữ liệu
+        const monthlyDataMap = {};
         const allYears = new Set();
 
         Object.entries(allAccountsData || {}).forEach(([accId, accData]) => {
-            const rows = Array.isArray(accData?.daily) ? accData.daily : [];
-            const startDay = getCycle(accId).startDay;
+            const monthly = accData?.monthly?.SanLuong || [];
             const map = new Map();
 
-            rows.forEach(row => {
-                const date = parseDailyDate(row?.Ngày);
-                if (!date || date > now) return;
+            monthly.forEach(item => {
+                const year = typeof item.Năm === 'number' ? item.Năm : parseInt(item.Năm, 10);
+                const month = typeof item.Tháng === 'number' ? item.Tháng : parseInt(item.Tháng, 10);
+                const value = typeof item["Điện tiêu thụ (KWh)"] === 'number' 
+                    ? item["Điện tiêu thụ (KWh)"] 
+                    : parseFloat(item["Điện tiêu thụ (KWh)"] || 0);
 
-                const raw = row["Điện tiêu thụ (kWh)"];
-                const value = typeof raw === 'number'
-                    ? raw
-                    : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
-                if (!Number.isFinite(value) || value < 0) return;
-
-                const period = getPeriodKey(date, startDay);
-                const key = `${period.year}-${period.month}`;
-                map.set(key, (map.get(key) || 0) + value);
+                if (!Number.isNaN(year) && !Number.isNaN(month) && value > 0) {
+                    const key = `${year}-${month}`;
+                    map.set(key, (map.get(key) || 0) + value);
+                    allYears.add(year);
+                }
             });
 
-            // Chỉ cho phép kỳ đã kết thúc.
-            for (const [key, value] of Array.from(map.entries())) {
-                const [year, month] = key.split('-').map(Number);
-                const endDate = startDay === 1
-                    ? new Date(year, month, 0)
-                    : new Date(year, month - 1, startDay - 1);
-
-                if (endDate <= now) {
-                    if (value > 0) allYears.add(year);
-                } else {
-                    map.delete(key);
-                }
-            }
-
-            periodData[accId] = map;
+            monthlyDataMap[accId] = map;
         });
 
         const sortedAllYears = Array.from(allYears).sort((a, b) => a - b);
@@ -609,7 +542,7 @@ class ChartManager {
 
         if (accountMode === 'multi') {
             let meterIndex = 0;
-            const accounts = Object.keys(periodData).filter(id => periodData[id].size > 0);
+            const accounts = Object.keys(monthlyDataMap).filter(id => monthlyDataMap[id].size > 0);
 
             accounts.forEach(accId => {
                 const shortId = accId.length > 4 ? '...' + accId.slice(-4) : accId;
@@ -619,7 +552,7 @@ class ChartManager {
                 effectiveYears.forEach((year, yIdx) => {
                     const yearData = new Array(12).fill(null);
                     for (let month = 1; month <= 12; month++) {
-                        const val = periodData[accId].get(`${year}-${month}`);
+                        const val = monthlyDataMap[accId].get(`${year}-${month}`);
                         if (val !== undefined) yearData[month - 1] = val;
                     }
 
@@ -641,11 +574,11 @@ class ChartManager {
             effectiveYears.forEach((year, index) => {
                 const yearData = new Array(12).fill(null);
 
-                Object.keys(periodData).forEach(accId => {
+                Object.keys(monthlyDataMap).forEach(accId => {
                     if (accountMode !== 'all' && accId !== accountMode) return;
 
                     for (let month = 1; month <= 12; month++) {
-                        const val = periodData[accId].get(`${year}-${month}`);
+                        const val = monthlyDataMap[accId].get(`${year}-${month}`);
                         if (val !== undefined) {
                             yearData[month - 1] = (yearData[month - 1] || 0) + val;
                         }
