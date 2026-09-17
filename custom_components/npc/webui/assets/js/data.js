@@ -560,10 +560,6 @@ class DataManager {
         const startDay = Math.max(1, Math.min(31, parseInt(billingCycle.startDay, 10) || 1));
         const monthlyMap = new Map();
 
-        console.log('📊 getMonthlyAggregation - targetYear:', targetYear);
-        console.log('📊 getMonthlyAggregation - monthlyData.SanLuong:', monthlyData.SanLuong);
-        console.log('📊 getMonthlyAggregation - monthlyData.TienDien:', monthlyData.TienDien);
-
 
 
         const parseDailyDate = (value) => {
@@ -586,26 +582,8 @@ class DataManager {
             return { year, month };
         };
 
-        // ƯU TIÊN: Dùng sản lượng từ monthlyData (đã có chỉ số chốt từ hóa đơn)
-        // Nếu không có monthlyData hoặc monthlyData rỗng, tính từ dailyData theo chu kỳ
-        let hasMonthlyData = false;
-        if (Array.isArray(monthlyData.SanLuong) && monthlyData.SanLuong.length > 0) {
-            hasMonthlyData = true;
-            monthlyData.SanLuong.forEach(item => {
-                const year = this.normalizeYearValue(item?.Năm);
-                const month = parseInt(item?.Tháng, 10);
-                if (year === null || !month || month < 1 || month > 12) return;
-                // Luôn lọc bỏ dữ liệu trước 2025
-                if (year < 2025) return;
-                if (targetYear !== null && year !== targetYear) return;
-                const key = `${year}-${month}`;
-                const raw = item["Điện tiêu thụ (KWh)"];
-                const consumption = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
-                monthlyMap.set(key, { Tháng: month, Năm: year, consumption });
-            });
-        }
-
-        // Nếu không có monthlyData hoặc cần bổ sung, tính từ dailyData theo chu kỳ
+        // ƯU TIÊN: Tính sản lượng từ dailyData theo chu kỳ thanh toán
+        // Chỉ dùng monthlyData nếu không có dailyData cho kỳ đó
         if (Array.isArray(this.dailyData)) {
             this.dailyData.forEach(day => {
                 const date = parseDailyDate(day?.Ngày);
@@ -614,16 +592,32 @@ class DataManager {
                 if (targetYear !== null && period.year !== targetYear) return;
                 const key = `${period.year}-${period.month}`;
 
-                // Nếu có monthlyData, chỉ bổ sung cho các kỳ không có trong monthlyData
-                // Nếu không có monthlyData, tính tất cả từ dailyData
-                if (hasMonthlyData && monthlyMap.has(key)) return;
-
                 const raw = day["Điện tiêu thụ (kWh)"];
                 const value = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
                 if (!Number.isFinite(value) || value < 0) return;
                 const entry = monthlyMap.get(key) || { Tháng: period.month, Năm: period.year, consumption: 0 };
                 entry.consumption += value;
                 monthlyMap.set(key, entry);
+            });
+        }
+
+        // Bổ sung từ monthlyData cho các kỳ không có dailyData
+        if (Array.isArray(monthlyData.SanLuong) && monthlyData.SanLuong.length > 0) {
+            monthlyData.SanLuong.forEach(item => {
+                const year = this.normalizeYearValue(item?.Năm);
+                const month = parseInt(item?.Tháng, 10);
+                if (year === null || !month || month < 1 || month > 12) return;
+                // Luôn lọc bỏ dữ liệu trước 2025
+                if (year < 2025) return;
+                if (targetYear !== null && year !== targetYear) return;
+                const key = `${year}-${month}`;
+
+                // Chỉ dùng monthlyData nếu dailyData không có kỳ đó
+                if (monthlyMap.has(key)) return;
+
+                const raw = item["Điện tiêu thụ (KWh)"];
+                const consumption = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
+                monthlyMap.set(key, { Tháng: month, Năm: year, consumption });
             });
         }
 
@@ -659,9 +653,6 @@ class DataManager {
         const today = new Date();
         today.setHours(23, 59, 59, 999);
         const isCompletedPeriod = (year, month) => {
-            // TẠM THỜI: Bỏ qua logic isCompletedPeriod để debug
-            return true;
-
             if (startDay === 1) {
                 return new Date(year, month, 0, 23, 59, 59, 999) <= today;
             }
@@ -922,8 +913,7 @@ class DataManager {
         } else {
             // Chu kỳ thanh toán tùy chỉnh - tạo danh sách kỳ thanh toán
             const result = this.generateBillingPeriods(billingCycle.startDay, filteredDailyData, filterYear);
-            console.log('📅 Custom billing cycle result:', result);
-            return result;
+                return result;
         }
     }// Tạo danh sách các kỳ thanh toán từ dữ liệu có sẵn
     generateBillingPeriods(startDay, filteredDailyData = null, filterYear = null) {

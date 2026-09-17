@@ -73,51 +73,70 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     exc_info=True,
                 )
 
-            # 4. Fetch daily data in batches of 15 days.
-            # Chỉ lấy từ 01/01/2025 đến hiện tại
-            start_date_daily = datetime(2025, 1, 1)
-            batch_days = 15
-
+            # 4. Fetch daily data - chỉ lấy những ngày còn thiếu
             # Remove stale local history outside the same 24-month retention
             # window so old rows (e.g. 2016) cannot keep appearing in sensors.
             await self.hass.async_add_executor_job(self._cleanup_history_retention)
-            
-            all_daily_data = []
-            current_start = start_date_daily
-            
-            while current_start < today:
-                current_end = min(current_start + timedelta(days=batch_days - 1), today)
-                from_date_str = current_start.strftime("%d/%m/%Y")
-                to_date_str = current_end.strftime("%d/%m/%Y")
-                
-                _LOGGER.debug(f"Fetching daily data from {from_date_str} to {to_date_str}")
-                daily_data = await self.api.get_chisongay(from_date_str, to_date_str)
-                
-                if daily_data and daily_data.get("data"):
-                    all_daily_data.extend(daily_data["data"])
-                
-                current_start = current_end + timedelta(days=1)
-            
-            if all_daily_data:
-                await self._save_daily_data(all_daily_data)
 
-            # 4. Fetch monthly history data (History from 2016 to now)
+            # Use executor to check missing daily data
+            missing_days = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
+
+            if missing_days:
+                _LOGGER.info(f"Syncing daily data for {self.customer_id}: {len(missing_days)} missing days")
+
+                # Group missing days into batches of 15 days
+                batch_days = 15
+                all_daily_data = []
+
+                for i in range(0, len(missing_days), batch_days):
+                    batch = missing_days[i:i + batch_days]
+                    if not batch:
+                        continue
+
+                    # Convert from dd-mm-yyyy to dd/mm/yyyy for API
+                    from_date = datetime.strptime(batch[0], "%d-%m-%Y").strftime("%d/%m/%Y")
+                    to_date = datetime.strptime(batch[-1], "%d-%m-%Y").strftime("%d/%m/%Y")
+
+                    _LOGGER.debug(f"Fetching daily data from {from_date} to {to_date} ({len(batch)} days)")
+                    daily_data = await self.api.get_chisongay(from_date, to_date)
+
+                    if daily_data and daily_data.get("data"):
+                        all_daily_data.extend(daily_data["data"])
+
+                if all_daily_data:
+                    await self._save_daily_data(all_daily_data)
+                    _LOGGER.info(f"Daily data sync completed for {self.customer_id}: {len(all_daily_data)} records")
+            else:
+                _LOGGER.debug(f"No missing daily data for {self.customer_id}")
+
+            # 4. Fetch bill data (hóa đơn) - ƯU TIÊN lấy từ hóa đơn trước
+            # Kiểm tra những tháng chưa có tien_dien
+            missing_bill_months = await self.hass.async_add_executor_job(self._get_missing_bill_months)
+
+            if missing_bill_months:
+                _LOGGER.info(f"Fetching bill data for {self.customer_id}: {len(missing_bill_months)} months missing")
+                bill_data = await self.api.get_hoadon()
+                _LOGGER.info(f"Hoadon API response: {bill_data}")
+                if bill_data and bill_data.get("data"):
+                    _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
+                    await self._save_bill_data(bill_data["data"])
+                    await self._save_hoadon_to_monthly_bill(bill_data["data"])
+            else:
+                _LOGGER.debug(f"No missing bill data for {self.customer_id}")
+
+            # 5. Fetch monthly history data (chỉ lấy những tháng chưa có san_luong_kwh)
+            # Những tháng đã có từ hóa đơn sẽ không lấy lại từ chisothang
             _LOGGER.info(f"Syncing monthly history for {self.customer_id}")
-            
-            # Use executor to check missing data
+
+            # Use executor to check missing data (chỉ những tháng chưa có san_luong_kwh)
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
-            
+
             for month, year in missing_periods:
-                _LOGGER.debug(f"Fetching missing monthly data for {month}/{year}")
+                _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
                 m_data = await self.api.get_chisothang(month, year)
+                _LOGGER.info(f"Chisothang API response for {month}/{year}: {m_data}")
                 if m_data and m_data.get("data"):
                     await self._save_monthly_data(m_data["data"], month, year)
-
-            # 5. Fetch bill data (hóa đơn)
-            bill_data = await self.api.get_hoadon()
-            if bill_data and bill_data.get("data"):
-                await self._save_bill_data(bill_data["data"])
-                await self._save_hoadon_to_monthly_bill(bill_data["data"])
 
             # 7. Power outage was synchronized at the start of this update cycle.
 
@@ -196,7 +215,10 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     def _get_missing_monthly_periods(self):
-        """Identify missing monthly periods only from 2025 to now."""
+        """Identify missing monthly periods only from 2025 to now.
+        Chỉ lấy những tháng chưa có dữ liệu tiêu thụ (san_luong_kwh).
+        Những tháng đã có từ hóa đơn (có cả tien_dien và san_luong_kwh) sẽ không lấy lại.
+        """
         missing = []
         today = datetime.now()
 
@@ -211,8 +233,87 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         while month_cursor <= current_month:
             month = month_cursor.month
             year = month_cursor.year
+
+            # Đảm bảo không lùi về năm trước 2025
+            if year < 2025:
+                if month_cursor.month == 12:
+                    month_cursor = datetime(month_cursor.year + 1, 1, 1)
+                else:
+                    month_cursor = datetime(month_cursor.year, month_cursor.month + 1, 1)
+                continue
+
+            # Kiểm tra tháng đã có đủ dữ liệu chưa (ưu tiên từ hóa đơn)
+            # Nếu đã có cả tien_dien và san_luong_kwh → coi như đã đủ, không lấy lại
             cursor.execute(
                 "SELECT 1 FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ? AND san_luong_kwh IS NOT NULL",
+                (self.customer_id, month, year)
+            )
+            if not cursor.fetchone():
+                missing.append((month, year))
+
+            if month_cursor.month == 12:
+                month_cursor = datetime(month_cursor.year + 1, 1, 1)
+            else:
+                month_cursor = datetime(month_cursor.year, month_cursor.month + 1, 1)
+
+        conn.close()
+        return missing
+
+    def _get_missing_daily_periods(self):
+        """Identify missing daily periods only from 2025 to now."""
+        missing = []
+        today = datetime.now()
+
+        # Chỉ lấy từ 01/01/2025 đến hiện tại
+        first_date = datetime(2025, 1, 1)
+        current_date = today
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        date_cursor = first_date
+        while date_cursor <= current_date:
+            ngay = date_cursor.strftime("%d-%m-%Y")
+
+            cursor.execute(
+                "SELECT 1 FROM daily_consumption WHERE userevn = ? AND ngay = ?",
+                (self.customer_id, ngay)
+            )
+            if not cursor.fetchone():
+                missing.append(ngay)
+
+            date_cursor += timedelta(days=1)
+
+        conn.close()
+        return missing
+
+    def _get_missing_bill_months(self):
+        """Identify months that are missing bill data (tien_dien)."""
+        missing = []
+        today = datetime.now()
+
+        # Chỉ lấy từ tháng 1/2025 đến hiện tại
+        first_month = datetime(2025, 1, 1)
+        current_month = datetime(today.year, today.month, 1)
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        month_cursor = first_month
+        while month_cursor <= current_month:
+            month = month_cursor.month
+            year = month_cursor.year
+
+            # Đảm bảo không lùi về năm trước 2025
+            if year < 2025:
+                if month_cursor.month == 12:
+                    month_cursor = datetime(month_cursor.year + 1, 1, 1)
+                else:
+                    month_cursor = datetime(month_cursor.year, month_cursor.month + 1, 1)
+                continue
+
+            cursor.execute(
+                "SELECT 1 FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ? AND tien_dien IS NOT NULL",
                 (self.customer_id, month, year)
             )
             if not cursor.fetchone():
