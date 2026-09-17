@@ -1235,41 +1235,34 @@ class DataManager {
                 }
             }
 
-                // Tính trend so với chu kỳ trước
-                if (index < recentMonths.length - 1) {
-                    const nextMonthYear = recentMonths[index + 1];
-                    let prevArr;
+            // Tính trend so với chu kỳ trước
+            if (index < recentMonths.length - 1) {
+                const nextMonthYear = recentMonths[index + 1];
+                let prevArr;
 
-                    if (billingCycle.type === 'calendar' || (billingCycle.type === 'cycle' && billingCycle.startDay === 1)) {
-                        prevArr = this.dailyData.filter(d =>
-                            d.Ngày && d.Ngày.slice(3, 10) === nextMonthYear && d["Điện tiêu thụ (kWh)"] > 0
-                        );
-                    } else {
-                        prevArr = this.getDataByBillingPeriod(nextMonthYear, billingCycle.startDay)
-                            .filter(d => d["Điện tiêu thụ (kWh)"] > 0);
-                    }
-
-                    const prevAvg = prevArr.length > 0 ?
-                        prevArr.map(d => d["Điện tiêu thụ (kWh)"]).reduce((a, b) => a + b, 0) / prevArr.length : 0;
-
-                    if (prevAvg > 0 && avg > 0) {
-                        trendValue = avg - prevAvg;
-                        trendPercent = (trendValue / prevAvg) * 100;
-
-                        if (trendValue > 0.01) trend = 'up';
-                        else if (trendValue < -0.01) trend = 'down';
-
-                        // Badge nếu tăng/giảm mạnh
-                        if (trendPercent > 20) badge = '<span class="trend-badge">Tăng mạnh</span>';
-                        else if (trendPercent < -20) badge = '<span class="trend-badge">Giảm mạnh</span>';
-                    }
+                if (billingCycle.type === 'calendar' || (billingCycle.type === 'cycle' && billingCycle.startDay === 1)) {
+                    prevArr = this.dailyData.filter(d =>
+                        d.Ngày && d.Ngày.slice(3, 10) === nextMonthYear && d["Điện tiêu thụ (kWh)"] > 0
+                    );
+                } else {
+                    prevArr = this.getDataByBillingPeriod(nextMonthYear, billingCycle.startDay)
+                        .filter(d => d["Điện tiêu thụ (kWh)"] > 0);
                 }
 
-                // Tạo sparkline SVG
-                const points = values.map((v, i) =>
-                    `${i * (60 / (values.length - 1))},${18 - (v - min) / (max - min + 0.01) * 16}`
-                ).join(' ');
-                sparkline = `<svg class='sparkline'><polyline fill='none' stroke='#e961ab' stroke-width='2' points='${points}'/></svg>`;
+                const prevAvg = prevArr.length > 0 ?
+                    prevArr.map(d => d["Điện tiêu thụ (kWh)"]).reduce((a, b) => a + b, 0) / prevArr.length : 0;
+
+                if (prevAvg > 0 && avg > 0) {
+                    trendValue = avg - prevAvg;
+                    trendPercent = (trendValue / prevAvg) * 100;
+
+                    if (trendValue > 0.01) trend = 'up';
+                    else if (trendValue < -0.01) trend = 'down';
+
+                    // Badge nếu tăng/giảm mạnh
+                    if (trendPercent > 20) badge = '<span class="trend-badge">Tăng mạnh</span>';
+                    else if (trendPercent < -20) badge = '<span class="trend-badge">Giảm mạnh</span>';
+                }
             }
 
             return {
@@ -1340,7 +1333,9 @@ class DataManager {
                 tiers: tierDetails
             }
         };
-    }    // Tính toán dữ liệu kỳ hiện tại
+    }
+
+    // Tính toán dữ liệu kỳ hiện tại
     calculateCurrentPeriod() {
         const billingCycle = this.getBillingCycle();
         const today = new Date();
