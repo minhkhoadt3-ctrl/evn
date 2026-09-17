@@ -536,9 +536,11 @@ class ChartManager {
 
         Object.entries(allAccountsData || {}).forEach(([accId, accData]) => {
             const rows = Array.isArray(accData?.daily) ? accData.daily : [];
+            const monthlyRows = Array.isArray(accData?.monthly?.SanLuong) ? accData.monthly.SanLuong : [];
             const startDay = getCycle(accId).startDay;
             const map = new Map();
 
+            // Ưu tiên: Tính từ dailyData theo chu kỳ thanh toán
             rows.forEach(row => {
                 const date = parseDailyDate(row?.Ngày);
                 if (!date || date > now) return;
@@ -552,6 +554,28 @@ class ChartManager {
                 const period = getPeriodKey(date, startDay);
                 const key = `${period.year}-${period.month}`;
                 map.set(key, (map.get(key) || 0) + value);
+            });
+
+            // Fallback: Bổ sung từ monthlyData cho các kỳ không có dailyData
+            // (chỉ dùng cho các kỳ lịch sử chưa có dailyData)
+            monthlyRows.forEach(item => {
+                const year = item?.Năm;
+                const month = parseInt(item?.Tháng, 10);
+                if (!year || !month || month < 1 || month > 12) return;
+                // Bỏ qua dữ liệu trước 2025
+                if (year < 2025) return;
+
+                const key = `${year}-${month}`;
+                // Chỉ dùng monthlyData nếu dailyData không có kỳ đó
+                if (map.has(key)) return;
+
+                const raw = item["Điện tiêu thụ (KWh)"];
+                const value = typeof raw === 'number'
+                    ? raw
+                    : parseFloat(String(raw ?? '').replace(',', '.')) || 0;
+                if (!Number.isFinite(value) || value < 0) return;
+
+                map.set(key, value);
             });
 
             // Chỉ cho phép kỳ đã kết thúc.
