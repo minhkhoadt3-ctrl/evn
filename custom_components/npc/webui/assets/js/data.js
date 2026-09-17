@@ -845,7 +845,7 @@ class DataManager {
         // để không mất tháng nào chỉ vì chưa có hóa đơn
         const monthsSet = new Set();
 
-        // Thêm từ bill data (TienDien)
+        // Thêm từ bill data (TienDien) - lọc theo năm ngay khi thêm
         if (this.monthlyData && this.monthlyData.TienDien && this.monthlyData.TienDien.length > 0) {
             console.log('📅 Adding months from bill data (TienDien)');
             this.monthlyData.TienDien.forEach(item => {
@@ -853,11 +853,13 @@ class DataManager {
                 const year = this.normalizeYearValue(item.Năm) || new Date().getFullYear();
                 // Lọc bỏ dữ liệu trước 2025
                 if (year < 2025) return;
+                // Lọc theo năm nếu có
+                if (targetYear !== null && year !== targetYear) return;
                 monthsSet.add(`${month}-${year}`);
             });
         }
 
-        // Thêm từ monthly history (SanLuong)
+        // Thêm từ monthly history (SanLuong) - lọc theo năm ngay khi thêm
         if (this.monthlyData && this.monthlyData.SanLuong && this.monthlyData.SanLuong.length > 0) {
             console.log('📅 Adding months from monthly history (SanLuong)');
             this.monthlyData.SanLuong.forEach(item => {
@@ -865,6 +867,8 @@ class DataManager {
                 const year = this.normalizeYearValue(item.Năm) || new Date().getFullYear();
                 // Lọc bỏ dữ liệu trước 2025
                 if (year < 2025) return;
+                // Lọc theo năm nếu có
+                if (targetYear !== null && year !== targetYear) return;
                 monthsSet.add(`${month}-${year}`);
             });
         }
@@ -884,11 +888,7 @@ class DataManager {
                 }
             }
 
-            // Lọc theo năm nếu có
-            if (targetYear !== null) {
-                months = months.filter(m => m.endsWith(`-${targetYear}`));
-            }
-
+            // Không cần lọc lại theo năm vì đã lọc khi thêm vào Set
             if (months.length > 0) {
                 return months.sort((a, b) => {
                     const [m1, y1] = a.split('-');
