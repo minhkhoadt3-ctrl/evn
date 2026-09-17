@@ -841,41 +841,48 @@ class DataManager {
         console.log('📅 getUniqueMonths - filter year:', filterYear);
         const targetYear = this.normalizeYearValue(filterYear);
 
-        // ƯU TIÊN 1: Fetch bill data (hóa đơn) - Ưu tiên đầu tiên
+        // ƯU TIÊN 1: Lấy union của cả bill data (TienDien) và monthly history (SanLuong)
+        // để không mất tháng nào chỉ vì chưa có hóa đơn
+        const monthsSet = new Set();
+
+        // Thêm từ bill data (TienDien)
         if (this.monthlyData && this.monthlyData.TienDien && this.monthlyData.TienDien.length > 0) {
-            console.log('📅 Using bill data (TienDien) for unique months');
-            let months = this.monthlyData.TienDien.map(item => {
+            console.log('📅 Adding months from bill data (TienDien)');
+            this.monthlyData.TienDien.forEach(item => {
                 const month = item.Tháng.toString().padStart(2, '0');
                 const year = this.normalizeYearValue(item.Năm) || new Date().getFullYear();
                 // Lọc bỏ dữ liệu trước 2025
-                if (year < 2025) return null;
-                return `${month}-${year}`;
-            }).filter(Boolean);
-
-            // Lọc theo năm nếu có
-            if (targetYear !== null) {
-                months = months.filter(m => m.endsWith(`-${targetYear}`));
-            }
-
-            if (months.length > 0) {
-                return months.sort((a, b) => {
-                    const [m1, y1] = a.split('-');
-                    const [m2, y2] = b.split('-');
-                    return new Date(y2, m2 - 1) - new Date(y1, m1 - 1);
-                });
-            }
+                if (year < 2025) return;
+                monthsSet.add(`${month}-${year}`);
+            });
         }
 
-        // ƯU TIÊN 2: Fetch monthly history (lịch sử tháng) - Ưu tiên thứ hai
+        // Thêm từ monthly history (SanLuong)
         if (this.monthlyData && this.monthlyData.SanLuong && this.monthlyData.SanLuong.length > 0) {
-            console.log('📅 Using monthly history (SanLuong) for unique months');
-            let months = this.monthlyData.SanLuong.map(item => {
+            console.log('📅 Adding months from monthly history (SanLuong)');
+            this.monthlyData.SanLuong.forEach(item => {
                 const month = item.Tháng.toString().padStart(2, '0');
                 const year = this.normalizeYearValue(item.Năm) || new Date().getFullYear();
                 // Lọc bỏ dữ liệu trước 2025
-                if (year < 2025) return null;
-                return `${month}-${year}`;
-            }).filter(Boolean);
+                if (year < 2025) return;
+                monthsSet.add(`${month}-${year}`);
+            });
+        }
+
+        // Nếu có monthly data, chuyển thành array và sort
+        if (monthsSet.size > 0) {
+            let months = Array.from(monthsSet);
+
+            // Thêm "Kỳ này" (tháng hiện tại) nếu không lọc theo năm
+            if (!filterYear) {
+                const currentDate = new Date();
+                const currentMonthYear = `${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-${currentDate.getFullYear()}`;
+                // Chỉ thêm nếu chưa có trong danh sách
+                if (!months.includes(currentMonthYear)) {
+                    months.push(currentMonthYear);
+                    console.log('📅 Added current period (Kỳ này):', currentMonthYear);
+                }
+            }
 
             // Lọc theo năm nếu có
             if (targetYear !== null) {
@@ -891,7 +898,7 @@ class DataManager {
             }
         }
 
-        // ƯU TIÊN 3: Fetch daily data (dữ liệu ngày) - Cuối cùng
+        // ƯU TIÊN 2: Fetch daily data (dữ liệu ngày) - Cuối cùng
         console.log('📅 Using daily data for unique months');
         if (!this.dailyData || !Array.isArray(this.dailyData) || this.dailyData.length === 0) {
             console.warn('⚠️ getUniqueMonths: No daily data available');
