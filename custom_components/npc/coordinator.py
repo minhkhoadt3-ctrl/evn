@@ -73,67 +73,49 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     exc_info=True,
                 )
 
-            # 4. Fetch daily data - chỉ lấy những ngày còn thiếu
+            # 4. Fetch daily data in batches of 90 days (có thể lấy cả năm trong app).
+            # Chỉ lấy từ 01/01/2025 đến hiện tại
+            start_date_daily = datetime(2025, 1, 1)
+            batch_days = 90
+
             # Tạm thời disable cleanup retention để tránh mất dữ liệu
             # await self.hass.async_add_executor_job(self._cleanup_history_retention)
 
-            # Use executor to check missing daily data
-            missing_days = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
+            all_daily_data = []
+            current_start = start_date_daily
 
-            if missing_days:
-                _LOGGER.info(f"Syncing daily data for {self.customer_id}: {len(missing_days)} missing days")
+            while current_start < today:
+                current_end = min(current_start + timedelta(days=batch_days - 1), today)
+                from_date_str = current_start.strftime("%d/%m/%Y")
+                to_date_str = current_end.strftime("%d/%m/%Y")
 
-                # Group missing days into batches of 15 days
-                batch_days = 15
-                all_daily_data = []
+                _LOGGER.debug(f"Fetching daily data from {from_date_str} to {to_date_str}")
+                daily_data = await self.api.get_chisongay(from_date_str, to_date_str)
 
-                for i in range(0, len(missing_days), batch_days):
-                    batch = missing_days[i:i + batch_days]
-                    if not batch:
-                        continue
+                if daily_data and daily_data.get("data"):
+                    all_daily_data.extend(daily_data["data"])
 
-                    # Convert from dd-mm-yyyy to dd/mm/yyyy for API
-                    from_date = datetime.strptime(batch[0], "%d-%m-%Y").strftime("%d/%m/%Y")
-                    to_date = datetime.strptime(batch[-1], "%d-%m-%Y").strftime("%d/%m/%Y")
+                current_start = current_end + timedelta(days=1)
 
-                    _LOGGER.debug(f"Fetching daily data from {from_date} to {to_date} ({len(batch)} days)")
-                    daily_data = await self.api.get_chisongay(from_date, to_date)
+            if all_daily_data:
+                await self._save_daily_data(all_daily_data)
 
-                    if daily_data and daily_data.get("data"):
-                        all_daily_data.extend(daily_data["data"])
+            # 5. Fetch bill data (hóa đơn)
+            bill_data = await self.api.get_hoadon()
+            if bill_data and bill_data.get("data"):
+                _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
+                await self._save_bill_data(bill_data["data"])
+                await self._save_hoadon_to_monthly_bill(bill_data["data"])
 
-                if all_daily_data:
-                    await self._save_daily_data(all_daily_data)
-                    _LOGGER.info(f"Daily data sync completed for {self.customer_id}: {len(all_daily_data)} records")
-            else:
-                _LOGGER.debug(f"No missing daily data for {self.customer_id}")
-
-            # 4. Fetch bill data (hóa đơn) - ƯU TIÊN lấy từ hóa đơn trước
-            # Kiểm tra những tháng chưa có tien_dien
-            missing_bill_months = await self.hass.async_add_executor_job(self._get_missing_bill_months)
-
-            if missing_bill_months:
-                _LOGGER.info(f"Fetching bill data for {self.customer_id}: {len(missing_bill_months)} months missing")
-                bill_data = await self.api.get_hoadon()
-                _LOGGER.info(f"Hoadon API response: {bill_data}")
-                if bill_data and bill_data.get("data"):
-                    _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
-                    await self._save_bill_data(bill_data["data"])
-                    await self._save_hoadon_to_monthly_bill(bill_data["data"])
-            else:
-                _LOGGER.debug(f"No missing bill data for {self.customer_id}")
-
-            # 5. Fetch monthly history data (chỉ lấy những tháng chưa có san_luong_kwh)
-            # Những tháng đã có từ hóa đơn sẽ không lấy lại từ chisothang
+            # 6. Fetch monthly history data (History from 2016 to now)
             _LOGGER.info(f"Syncing monthly history for {self.customer_id}")
 
-            # Use executor to check missing data (chỉ những tháng chưa có san_luong_kwh)
+            # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
 
             for month, year in missing_periods:
-                _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
+                _LOGGER.debug(f"Fetching missing monthly data for {month}/{year}")
                 m_data = await self.api.get_chisothang(month, year)
-                _LOGGER.info(f"Chisothang API response for {month}/{year}: {m_data}")
                 if m_data and m_data.get("data"):
                     await self._save_monthly_data(m_data["data"], month, year)
 

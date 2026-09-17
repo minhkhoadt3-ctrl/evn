@@ -84,17 +84,17 @@ body {
     margin: 5px 0;
     padding: 3px;
     border-radius: 6px;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
     overflow: hidden;
 }
 
 .monthly-chart {
-    background: linear-gradient(145deg, rgba(147,112,219,0.15), rgba(233,97,171,0.15));
+    background: linear-gradient(145deg, rgba(147,112,219,0.25), rgba(233,97,171,0.25));
 }
 
 .daily-chart {
-    background: linear-gradient(145deg, rgba(46,204,113,0.15), rgba(52,152,219,0.15));
+    background: linear-gradient(145deg, rgba(46,204,113,0.25), rgba(52,152,219,0.25));
 }
 
 /* Content Layout */
