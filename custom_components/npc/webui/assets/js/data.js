@@ -898,27 +898,29 @@ class DataManager {
         if (monthsSet.size > 0) {
             let months = Array.from(monthsSet);
 
-            // Thêm tháng kết thúc kỳ dựa trên data gần nhất nếu không lọc theo năm
-            if (!filterYear) {
-                // Tìm data gần nhất
-                const latestDataDate = this.getLatestDataDate();
-                if (latestDataDate) {
-                    // Tính tháng kết thúc kỳ dựa trên chu kỳ thanh toán
-                    let displayMonth, displayYear;
+            // Thêm tháng kết thúc kỳ dựa trên data gần nhất nếu:
+            // - Không lọc theo năm (Tất cả các năm), HOẶC
+            // - Lọc theo năm có chứa tháng kết thúc kỳ của data gần nhất
+            const latestDataDate = this.getLatestDataDate();
+            if (latestDataDate) {
+                // Tính tháng kết thúc kỳ dựa trên chu kỳ thanh toán
+                let displayMonth, displayYear;
 
-                    if (billingCycle.type === 'calendar' || billingCycle.startDay === 1) {
-                        // Chu kỳ dương lịch: dùng tháng của data gần nhất
-                        displayMonth = latestDataDate.getMonth() + 1;
-                        displayYear = latestDataDate.getFullYear();
-                    } else {
-                        // Chu kỳ thanh toán tùy chỉnh: tính tháng kết thúc kỳ
-                        const periodInfo = this.tinhngaydauky(billingCycle.startDay, latestDataDate);
-                        displayMonth = periodInfo.end_ky.getMonth() + 1;
-                        displayYear = periodInfo.end_ky.getFullYear();
-                    }
+                if (billingCycle.type === 'calendar' || billingCycle.startDay === 1) {
+                    // Chu kỳ dương lịch: dùng tháng của data gần nhất
+                    displayMonth = latestDataDate.getMonth() + 1;
+                    displayYear = latestDataDate.getFullYear();
+                } else {
+                    // Chu kỳ thanh toán tùy chỉnh: tính tháng kết thúc kỳ
+                    const periodInfo = this.tinhngaydauky(billingCycle.startDay, latestDataDate);
+                    displayMonth = periodInfo.end_ky.getMonth() + 1;
+                    displayYear = periodInfo.end_ky.getFullYear();
+                }
 
-                    const latestMonthYear = `${displayMonth.toString().padStart(2, '0')}-${displayYear}`;
+                const latestMonthYear = `${displayMonth.toString().padStart(2, '0')}-${displayYear}`;
 
+                // Thêm nếu: không lọc theo năm, hoặc lọc theo năm có chứa tháng này
+                if (!filterYear || targetYear === displayYear) {
                     // Chỉ thêm nếu chưa có trong danh sách
                     if (!months.includes(latestMonthYear)) {
                         months.push(latestMonthYear);
