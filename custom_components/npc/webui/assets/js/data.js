@@ -688,9 +688,15 @@ class DataManager {
             }
         });
 
-        // Loại bỏ toàn bộ kỳ tương lai/kỳ hiện tại chưa hoàn tất, kể cả khi
-        // monthlyData.SanLuong có sẵn các record 09..12 từ API/cache cũ.
+        // Loại bỏ kỳ tương lai/kỳ hiện tại chưa hoàn tất, NHƯNG giữ lại các kỳ có tiền hóa đơn
+        // để đảm bảo kỳ hóa đơn gần nhất không bị mất
         for (const [key, entry] of monthlyMap.entries()) {
+            // Nếu kỳ có tiền hóa đơn, giữ lại dù chưa hoàn tất
+            if (costMap.has(key)) {
+                continue;
+            }
+
+            // Chỉ loại bỏ các kỳ chưa hoàn tất không có tiền hóa đơn
             if (!isCompletedPeriod(entry.Năm, entry.Tháng)) {
                 monthlyMap.delete(key);
                 costMap.delete(key); // Xóa cả tiền tương ứng
