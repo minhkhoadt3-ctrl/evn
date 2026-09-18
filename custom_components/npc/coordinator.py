@@ -50,19 +50,19 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             outage_from = today.strftime("%d/%m/%Y")
             outage_to = (today + timedelta(days=30)).strftime("%d/%m/%Y")
             try:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"Fetching power outage schedule for {self.customer_id}: "
                     f"{outage_from} -> {outage_to}"
                 )
                 outage_data = await self.api.get_ngungcapdien(outage_from, outage_to)
                 if outage_data is not None and isinstance(outage_data.get("data"), list):
                     await self._save_outage_data(outage_data["data"])
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Power outage sync completed for {self.customer_id}: "
                         f"{len(outage_data['data'])} records"
                     )
                 else:
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         f"Power outage API returned no usable data for {self.customer_id}: "
                         f"{outage_data!r}"
                     )
@@ -76,7 +76,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # 4. Fetch monthly history data (History from 2016 to now) - ƯU TIÊN ĐẦU TIÊN
             # Dữ liệu chisothang từ API cũng chính xác, ưu tiên trước daily data
             # Chỉ lấy các tháng chưa có trong database
-            _LOGGER.info(f"Syncing monthly history for {self.customer_id}")
+            _LOGGER.debug(f"Syncing monthly history for {self.customer_id}")
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
@@ -85,25 +85,25 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.info(f"Found {len(missing_periods)} missing monthly periods for {self.customer_id}")
 
                 for month, year in missing_periods:
-                    _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
+                    _LOGGER.debug(f"Fetching missing monthly data for {month}/{year}")
                     m_data = await self.api.get_chisothang(month, year)
                     if m_data and m_data.get("data"):
                         await self._save_monthly_data(m_data["data"], month, year)
-                        _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
+                        _LOGGER.debug(f"Successfully saved monthly data for {month}/{year}")
                     else:
                         _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
             else:
-                _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
+                _LOGGER.debug(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
 
             # 5. Fetch bill data (hóa đơn) - ƯU TIÊN THỨ HAI
             # Dữ liệu hóa đơn từ API là chính xác nhất, ưu tiên trước daily data
             # Chạy sau monthly history để không làm ảnh hưởng việc sync lịch sử
             bill_data = await self.api.get_hoadon()
             if bill_data and bill_data.get("data"):
-                _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
+                _LOGGER.debug(f"Bill data received: {len(bill_data.get('data', []))} records")
                 await self._save_bill_data(bill_data["data"])
                 await self._save_hoadon_to_monthly_bill(bill_data["data"])
-                _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
+                _LOGGER.debug(f"Bill data sync completed for {self.customer_id}")
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
@@ -112,15 +112,15 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.info(f"Found {len(missing_periods)} missing monthly periods for {self.customer_id}")
 
                 for month, year in missing_periods:
-                    _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
+                    _LOGGER.debug(f"Fetching missing monthly data for {month}/{year}")
                     m_data = await self.api.get_chisothang(month, year)
                     if m_data and m_data.get("data"):
                         await self._save_monthly_data(m_data["data"], month, year)
-                        _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
+                        _LOGGER.debug(f"Successfully saved monthly data for {month}/{year}")
                     else:
                         _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
             else:
-                _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
+                _LOGGER.debug(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
 
             # 6. Fetch daily data by month (từng tháng một) để tránh lỗi date calculation
             # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
@@ -164,16 +164,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     from_date = f"01/{month:02d}/{year}"
                     to_date = f"{last_day:02d}/{month:02d}/{year}"
                     
-                    _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
+                    _LOGGER.debug(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
                     daily_data = await self.api.get_chisongay(from_date, to_date)
 
                     if daily_data and daily_data.get("data"):
                         batch_records = len(daily_data["data"])
                         all_daily_data.extend(daily_data["data"])
-                        _LOGGER.info(f"Batch {batch_count}: Received {batch_records} daily records")
                     else:
                         failed_batches += 1
-                        _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
 
                 if all_daily_data:
                     _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
@@ -181,7 +179,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 else:
                     _LOGGER.warning(f"No daily data collected for {self.customer_id}, skipping daily data save (failed batches: {failed_batches})")
             else:
-                _LOGGER.info(f"No missing daily periods found for {self.customer_id}, skipping API calls")
+                _LOGGER.debug(f"No missing daily periods found for {self.customer_id}, skipping API calls")
 
             # 7. Power outage was synchronized at the start of this update cycle.
 
@@ -236,7 +234,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         """)
         deleted_count = cursor.rowcount
         if deleted_count > 0:
-            _LOGGER.info(f"Cleaned up {deleted_count} empty records from daily_consumption")
+            _LOGGER.debug(f"Cleaned up {deleted_count} empty records from daily_consumption")
         
         conn.commit()
         conn.close()
@@ -288,12 +286,15 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         )
         result = cursor.fetchone()
         
-        _LOGGER.info(f"DEBUG: Latest month in database for {self.customer_id}: {result}")
+        if result and result[0]:
+            _LOGGER.debug(f"Latest month in database for {self.customer_id}: {result}")
+        else:
+            _LOGGER.debug(f"No existing monthly data found for {self.customer_id}, starting from 01/2025")
 
         if not result or not result[0]:
             # Không có dữ liệu nào, bắt đầu từ tháng 1/2025
             first_month = datetime(2025, 1, 1)
-            _LOGGER.info(f"No existing monthly data found, starting from {first_month.strftime('%m/%Y')}")
+            _LOGGER.debug(f"No existing monthly data found, starting from {first_month.strftime('%m/%Y')}")
         else:
             # Có dữ liệu, bắt đầu từ tháng tiếp theo của tháng gần nhất
             month_num = result[0]  # nam * 12 + thang
@@ -301,7 +302,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             next_year = (next_month_num - 1) // 12
             next_month = (next_month_num - 1) % 12 + 1
             first_month = datetime(next_year, next_month, 1)
-            _LOGGER.info(f"Starting monthly data sync from {first_month.strftime('%m/%Y')} (after latest data)")
+            _LOGGER.debug(f"Starting monthly data sync from {first_month.strftime('%m/%Y')} (after latest data)")
 
         # Tính tháng trước tháng hiện tại (tháng hiện tại chưa hết kỳ nên không lấy)
         if today.month == 1:
@@ -338,7 +339,6 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             
             if should_add:
                 missing.append((month, year))
-                _LOGGER.debug(f"Added missing period: {month}/{year}")
 
             if month_cursor.month == 12:
                 month_cursor = datetime(month_cursor.year + 1, 1, 1)
@@ -367,8 +367,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         result = cursor.fetchone()
         latest_date_str = result[0] if result and result[0] else None
         
-        _LOGGER.info(f"DEBUG: Database path = {self.db_path}")
-        _LOGGER.info(f"DEBUG: Latest date in database for {self.customer_id}: {latest_date_str}")
+        _LOGGER.debug(f"Database path = {self.db_path}")
+        _LOGGER.debug(f"Latest date in database for {self.customer_id}: {latest_date_str}")
         
         # Debug: Count total records and records with actual data
         cursor.execute(
@@ -383,17 +383,18 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         )
         data_count = cursor.fetchone()[0]
         
-        _LOGGER.info(f"DEBUG: Total records for {self.customer_id}: {total_count}, records with data: {data_count}")
+        if total_count != data_count:
+            _LOGGER.debug(f"Total records for {self.customer_id}: {total_count}, records with data: {data_count}")
 
         if not latest_date_str:
             # Không có dữ liệu nào, bắt đầu từ 01/01/2025
             first_date = datetime(2025, 1, 1)
-            _LOGGER.info(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
+            _LOGGER.debug(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
         else:
             # Có dữ liệu, bắt đầu từ ngày tiếp theo của ngày gần nhất
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
             first_date = latest_date + timedelta(days=1)
-            _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
+            _LOGGER.debug(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
 
         current_date = today
 
@@ -466,7 +467,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
         conn.commit()
         conn.close()
-        _LOGGER.info(f"Force resync: Deleted all data for {self.customer_id}, will sync from scratch")
+        _LOGGER.warning(f"Force resync: Deleted all data for {self.customer_id}, will sync from scratch")
         
         # Reset coordinator state để đảm bảo sync lại từ đầu
         self.data = {}
@@ -498,7 +499,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # So reverse the list first, then sort by date to be safe
             sorted_data = sorted(data, key=lambda x: self._parse_date_for_sort(record=x))
             
-            _LOGGER.info(f"Processing {len(sorted_data)} daily records for {self.customer_id}")
+            _LOGGER.debug(f"Processing {len(sorted_data)} daily records for {self.customer_id}")
             
             prev_chi_so = None
             prev_ngay = None
@@ -590,7 +591,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             conn.commit()
             conn.close()
-            _LOGGER.info(f"Saved {saved_count} daily records for {self.customer_id}, skipped {skipped_count}")
+            _LOGGER.debug(f"Saved {saved_count} daily records for {self.customer_id}, skipped {skipped_count}")
             
             # DEBUG: Verify data was actually saved
             conn = sqlite3.connect(self.db_path)
@@ -600,7 +601,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 (self.customer_id,)
             )
             count = cursor.fetchone()[0]
-            _LOGGER.info(f"DEBUG: After save, total records in DB for {self.customer_id}: {count}")
+            _LOGGER.debug(f"After save, total records in DB for {self.customer_id}: {count}")
             conn.close()
 
         except Exception as e:
@@ -679,9 +680,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                                   tien_dien = COALESCE(monthly_bill.tien_dien, excluded.tien_dien)
                 """, (self.customer_id, month, year, san_luong))
                 
-                _LOGGER.info(f"Saved monthly data for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
+                _LOGGER.debug(f"Saved monthly data for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
             else:
-                _LOGGER.warning(f"Invalid san_luong for {self.customer_id}, {month}/{year}: {san_luong}")
+                _LOGGER.debug(f"Invalid san_luong for {self.customer_id}, {month}/{year}: {san_luong}")
 
             conn.commit()
             conn.close()
@@ -778,7 +779,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             conn.commit()
             conn.close()
-            _LOGGER.info(f"Saved {len(data)} hóa đơn records to monthly_bill for {self.customer_id}")
+            _LOGGER.debug(f"Saved {len(data)} hóa đơn records to monthly_bill for {self.customer_id}")
 
         except Exception as e:
             _LOGGER.error(f"Error saving hóa đơn to monthly_bill: {e}", exc_info=True)
@@ -926,8 +927,6 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 if not date_str or date_str.lower() in ['null', 'none', '']:
                     continue
                 
-                _LOGGER.debug(f"Trying to parse date from field '{field}': '{date_str}'")
-                
                 # Handle THOI_DIEM format: "24/01/2026 00:33" -> extract date part
                 if field in ["THOI_DIEM", "thoi_diem"] and ' ' in date_str:
                     date_str = date_str.split(' ')[0]
@@ -983,11 +982,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         except:
                             pass
                 except Exception as e:
-                    _LOGGER.debug(f"Error parsing date {date_str} from field {field}: {e}")
                     continue
         
         # Default to today
-        _LOGGER.debug(f"Could not parse date from record: {record}, using today")
         return datetime.now().strftime("%d-%m-%Y")
 
     def _parse_date_for_sort(self, record: Dict) -> datetime:
@@ -1024,11 +1021,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     elif len(date_str) == 8 and date_str.isdigit():
                         return datetime.strptime(date_str, "%Y%m%d")
                 except Exception as e:
-                    _LOGGER.debug(f"Error parsing date for sort from field {field}: {e}")
                     continue
         
         # Default to today if parsing fails
-        _LOGGER.debug(f"Could not parse date for sort from record: {record}, using today")
         return datetime.now()
 
     def _parse_float(self, value: Any) -> Optional[float]:
