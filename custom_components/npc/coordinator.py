@@ -434,11 +434,15 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
         cursor.execute("DELETE FROM daily_consumption WHERE userevn = ?", (self.customer_id,))
         cursor.execute("DELETE FROM monthly_bill WHERE userevn = ?", (self.customer_id,))
-        cursor.execute("DELETE FROM current_period WHERE userevn = ?", (self.customer_id,))
+        cursor.execute("DELETE FROM power_outage_schedule WHERE userevn = ?", (self.customer_id,))
+        cursor.execute("DELETE FROM tien_no_evn WHERE userevn = ?", (self.customer_id,))
 
         conn.commit()
         conn.close()
         _LOGGER.info(f"Force resync: Deleted all data for {self.customer_id}, will sync from scratch")
+        
+        # Reset coordinator state để đảm bảo sync lại từ đầu
+        self.data = {}
 
     async def _save_daily_data(self, data: list):
         """Save daily consumption data to database."""
