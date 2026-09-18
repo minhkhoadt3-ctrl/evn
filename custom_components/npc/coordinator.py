@@ -142,8 +142,22 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
                     if daily_data and daily_data.get("data"):
                         batch_records = len(daily_data["data"])
-                        all_daily_data.extend(daily_data["data"])
-                        _LOGGER.debug(f"Batch {batch_count}: Received {batch_records} daily records")
+                        
+                        # Filter API response to only include records within requested date range
+                        # API often returns entire history instead of just the requested range
+                        filtered_records = []
+                        for record in daily_data["data"]:
+                            record_date = self._parse_date(record)
+                            if record_date:
+                                try:
+                                    record_date_obj = datetime.strptime(record_date, "%d-%m-%Y")
+                                    if from_date_obj <= record_date_obj <= to_date_obj:
+                                        filtered_records.append(record)
+                                except:
+                                    pass
+                        
+                        _LOGGER.info(f"Batch {batch_count}: API returned {batch_records} records, filtered to {len(filtered_records)} within range")
+                        all_daily_data.extend(filtered_records)
                     else:
                         failed_batches += 1
                         _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
