@@ -104,11 +104,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             else:
                 _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
 
-            # 6. Fetch daily data in batches of 90 days (có thể lấy cả năm trong app).
+            # 6. Fetch daily data in batches of 10 days.
             # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
             # Chỉ lấy những ngày chưa có trong database
             start_date_daily = datetime(2025, 1, 1)
-            batch_days = 90
+            batch_days = 10
 
             # Tạm thời disable cleanup retention để tránh mất dữ liệu
             # await self.hass.async_add_executor_job(self._cleanup_history_retention)
@@ -298,35 +298,47 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         return missing
 
     def _get_missing_daily_periods(self):
-        """Identify missing daily periods only from 2025 to now."""
+        """Identify missing daily periods only from 2025 to now.
+        Chỉ lấy các ngày thiếu sau ngày liên tiếp gần nhất có dữ liệu.
+        Nếu ngày 5,6 thiếu nhưng ngày 7 có, thì bắt đầu từ ngày 7+1 (không lấy 5,6).
+        """
         missing = []
         today = datetime.now()
 
-        # Tìm ngày có dữ liệu gần nhất trong database để không gọi API cho khoảng thời gian không có dữ liệu
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Tìm ngày gần nhất có dữ liệu
+        # Lấy tất cả các ngày có dữ liệu, sort theo ngày
         cursor.execute(
-            "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ?",
+            "SELECT ngay FROM daily_consumption WHERE userevn = ? ORDER BY ngay",
             (self.customer_id,)
         )
-        latest_date_row = cursor.fetchone()
-        latest_date = None
-        if latest_date_row and latest_date_row[0]:
-            try:
-                latest_date = datetime.strptime(latest_date_row[0], "%d-%m-%Y")
-            except:
-                pass
+        existing_dates = [row[0] for row in cursor.fetchall()]
 
-        # Nếu có dữ liệu gần nhất, bắt đầu từ ngày đó + 1
-        # Nếu không có dữ liệu, bắt đầu từ 01/01/2025
-        if latest_date:
-            first_date = latest_date + timedelta(days=1)
-            _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date.strftime('%d/%m/%Y')})")
-        else:
+        if not existing_dates:
+            # Không có dữ liệu nào, bắt đầu từ 01/01/2025
             first_date = datetime(2025, 1, 1)
             _LOGGER.info(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
+        else:
+            # Tìm ngày liên tiếp gần nhất có dữ liệu (không có gap > 1 ngày)
+            # Scan từ cuối về đầu để tìm ngày liên tiếp
+            latest_date_str = existing_dates[-1]
+            latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
+
+            # Kiểm tra xem các ngày trước đó có liên tiếp không
+            consecutive_date = latest_date
+            for i in range(len(existing_dates) - 2, -1, -1):
+                prev_date_str = existing_dates[i]
+                prev_date = datetime.strptime(prev_date_str, "%d-%m-%Y")
+
+                # Nếu ngày trước không phải ngày liền trước, dừng lại
+                if (consecutive_date - prev_date).days != 1:
+                    break
+
+                consecutive_date = prev_date
+
+            first_date = consecutive_date + timedelta(days=1)
+            _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest consecutive data {consecutive_date.strftime('%d/%m/%Y')})")
 
         current_date = today
 
