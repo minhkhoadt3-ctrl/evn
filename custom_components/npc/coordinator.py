@@ -149,7 +149,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
                     await self._save_daily_data(all_daily_data)
                 else:
-                    _LOGGER.warning(f"No daily data collected for {self.customer_id}, failed batches: {failed_batches}")
+                    _LOGGER.warning(f"No daily data collected for {self.customer_id}, skipping daily data save (failed batches: {failed_batches})")
             else:
                 _LOGGER.info(f"No missing daily periods found for {self.customer_id}, skipping API calls")
 
@@ -302,12 +302,33 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         missing = []
         today = datetime.now()
 
-        # Chỉ lấy từ 01/01/2025 đến hiện tại
-        first_date = datetime(2025, 1, 1)
-        current_date = today
-
+        # Tìm ngày có dữ liệu gần nhất trong database để không gọi API cho khoảng thời gian không có dữ liệu
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+
+        # Tìm ngày gần nhất có dữ liệu
+        cursor.execute(
+            "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ?",
+            (self.customer_id,)
+        )
+        latest_date_row = cursor.fetchone()
+        latest_date = None
+        if latest_date_row and latest_date_row[0]:
+            try:
+                latest_date = datetime.strptime(latest_date_row[0], "%d-%m-%Y")
+            except:
+                pass
+
+        # Nếu có dữ liệu gần nhất, bắt đầu từ ngày đó + 1
+        # Nếu không có dữ liệu, bắt đầu từ 01/01/2025
+        if latest_date:
+            first_date = latest_date + timedelta(days=1)
+            _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date.strftime('%d/%m/%Y')})")
+        else:
+            first_date = datetime(2025, 1, 1)
+            _LOGGER.info(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
+
+        current_date = today
 
         date_cursor = first_date
         while date_cursor <= current_date:
