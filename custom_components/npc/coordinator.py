@@ -201,6 +201,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 PRIMARY KEY (userevn)
             )
         """)
+        
+        # Xóa các record rỗng trong daily_consumption (không có chi_so và dien_tieu_thu_kwh)
+        cursor.execute("""
+            DELETE FROM daily_consumption 
+            WHERE chi_so IS NULL AND dien_tieu_thu_kwh IS NULL
+        """)
+        deleted_count = cursor.rowcount
+        if deleted_count > 0:
+            _LOGGER.info(f"Cleaned up {deleted_count} empty records from daily_consumption")
+        
         conn.commit()
         conn.close()
 
@@ -322,9 +332,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Lấy ngày gần nhất có dữ liệu (ngày cuối cùng trong database)
+        # Lấy ngày gần nhất có dữ liệu thực sự (có chi_so hoặc dien_tieu_thu_kwh)
         cursor.execute(
-            "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ?",
+            "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL)",
             (self.customer_id,)
         )
         result = cursor.fetchone()
@@ -332,6 +342,21 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         
         _LOGGER.info(f"DEBUG: Database path = {self.db_path}")
         _LOGGER.info(f"DEBUG: Latest date in database for {self.customer_id}: {latest_date_str}")
+        
+        # Debug: Count total records and records with actual data
+        cursor.execute(
+            "SELECT COUNT(*) FROM daily_consumption WHERE userevn = ?",
+            (self.customer_id,)
+        )
+        total_count = cursor.fetchone()[0]
+        
+        cursor.execute(
+            "SELECT COUNT(*) FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL)",
+            (self.customer_id,)
+        )
+        data_count = cursor.fetchone()[0]
+        
+        _LOGGER.info(f"DEBUG: Total records for {self.customer_id}: {total_count}, records with data: {data_count}")
 
         if not latest_date_str:
             # Không có dữ liệu nào, bắt đầu từ 01/01/2025
@@ -517,16 +542,20 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         dien_tieu_thu = None
                 
 
-
-                cursor.execute("""
-                    INSERT OR REPLACE INTO daily_consumption 
-                    (userevn, ngay, chi_so, dien_tieu_thu_kwh)
-                    VALUES (?, ?, ?, ?)
-                """, (self.customer_id, ngay, chi_so, dien_tieu_thu))
-                
-                saved_count += 1
-                prev_chi_so = chi_so
-                prev_ngay = ngay
+                # Chỉ lưu khi có ít nhất một trong hai giá trị không phải NULL
+                if chi_so is not None or dien_tieu_thu is not None:
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO daily_consumption 
+                        (userevn, ngay, chi_so, dien_tieu_thu_kwh)
+                        VALUES (?, ?, ?, ?)
+                    """, (self.customer_id, ngay, chi_so, dien_tieu_thu))
+                    
+                    saved_count += 1
+                    prev_chi_so = chi_so
+                    prev_ngay = ngay
+                else:
+                    _LOGGER.debug(f"Skipping record {ngay}: no data (chi_so={chi_so}, dien_tieu_thu={dien_tieu_thu})")
+                    skipped_count += 1
 
             conn.commit()
             conn.close()
