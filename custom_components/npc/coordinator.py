@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 import sqlite3
 import os
+import asyncio
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -43,6 +44,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             if not self.api.access_token:
                 if not await self.api.login():
                     raise UpdateFailed("Failed to login")
+            
+            # Độ trễ 1s sau login
+            await asyncio.sleep(1)
 
             # 3. Fetch power outage schedule FIRST.
             # This must not be blocked by the much heavier historical sync below.
@@ -66,6 +70,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         f"Power outage API returned no usable data for {self.customer_id}: "
                         f"{outage_data!r}"
                     )
+                
+                # Độ trễ 1s giữa các API calls
+                await asyncio.sleep(1)
             except Exception as outage_err:
                 # Do not let outage API problems prevent the rest of EVN data from updating.
                 _LOGGER.error(
@@ -92,8 +99,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.debug(f"Successfully saved monthly data for {month}/{year}")
                     else:
                         _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
+                    
+                    # Độ trễ 1s giữa các API calls monthly
+                    await asyncio.sleep(1)
             else:
                 _LOGGER.debug(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
+
+            # Độ trễ 1s sau monthly history sync
+            await asyncio.sleep(1)
 
             # 5. Fetch bill data (hóa đơn) - ƯU TIÊN THỨ HAI
             # Dữ liệu hóa đơn từ API là chính xác nhất, ưu tiên trước daily data
@@ -104,6 +117,12 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 await self._save_bill_data(bill_data["data"])
                 await self._save_hoadon_to_monthly_bill(bill_data["data"])
                 _LOGGER.debug(f"Bill data sync completed for {self.customer_id}")
+            
+            # Độ trễ 1s sau bill data API call
+            await asyncio.sleep(1)
+            
+            # Độ trễ 1s sau bill data
+            await asyncio.sleep(1)
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
@@ -119,8 +138,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.debug(f"Successfully saved monthly data for {month}/{year}")
                     else:
                         _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
+                    
+                    # Độ trễ 1s giữa các API calls monthly (lần 2)
+                    await asyncio.sleep(1)
             else:
                 _LOGGER.debug(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
+
+            # Độ trễ 1s sau monthly history sync lần 2
+            await asyncio.sleep(1)
 
             # 6. Fetch daily data by month (từng tháng một) để tránh lỗi date calculation
             # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
@@ -172,6 +197,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         all_daily_data.extend(daily_data["data"])
                     else:
                         failed_batches += 1
+                    
+                    # Độ trễ 1s giữa các API calls daily data
+                    await asyncio.sleep(1)
 
                 if all_daily_data:
                     _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
@@ -180,6 +208,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning(f"No daily data collected for {self.customer_id}, skipping daily data save (failed batches: {failed_batches})")
             else:
                 _LOGGER.debug(f"No missing daily periods found for {self.customer_id}, skipping API calls")
+
+            # Độ trễ 1s sau daily data sync
+            await asyncio.sleep(1)
 
             # 7. Power outage was synchronized at the start of this update cycle.
 
@@ -574,8 +605,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         dien_tieu_thu = None
                 
 
-                # Chỉ lưu khi có ít nhất một trong hai giá trị không phải NULL
-                if chi_so is not None or dien_tieu_thu is not None:
+                # Chỉ lưu khi có ít nhất một giá trị > 0
+                should_save = False
+                if chi_so is not None and chi_so > 0:
+                    should_save = True
+                elif dien_tieu_thu is not None and dien_tieu_thu > 0:
+                    should_save = True
+                
+                if should_save:
                     # Kiểm tra xem dữ liệu đã tồn tại và giống hệt chưa
                     cursor.execute(
                         "SELECT chi_so, dien_tieu_thu_kwh FROM daily_consumption WHERE userevn=? AND ngay=?",
@@ -605,7 +642,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     else:
                         skipped_count += 1
                 else:
-                    _LOGGER.debug(f"Skipping record {ngay}: no data (chi_so={chi_so}, dien_tieu_thu={dien_tieu_thu})")
+                    _LOGGER.debug(f"Skipping record {ngay}: no valid data (chi_so={chi_so}, dien_tieu_thu={dien_tieu_thu})")
                     skipped_count += 1
                     skipped_count += 1
 
@@ -714,7 +751,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 else:
                     _LOGGER.debug(f"Monthly data unchanged for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
             else:
-                _LOGGER.debug(f"Invalid san_luong for {self.customer_id}, {month}/{year}: {san_luong}")
+                _LOGGER.debug(f"Invalid san_luong for {self.customer_id}, {month}/{year}: {san_luong}, skipping save")
 
             conn.commit()
             conn.close()
@@ -801,7 +838,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 tien_dien = self._parse_float(bill.get("TONG_TIEN"))
                 san_luong = self._parse_float(bill.get("DIEN_TTHU"))  # DIEN_TTHU = điện tiêu thụ
                 
-                if thang is not None and nam is not None:
+                # Chỉ lưu khi có ít nhất một giá trị > 0
+                should_save = False
+                if tien_dien is not None and tien_dien > 0:
+                    should_save = True
+                elif san_luong is not None and san_luong > 0:
+                    should_save = True
+                
+                if thang is not None and nam is not None and should_save:
                     # Kiểm tra xem dữ liệu đã tồn tại và giống hệt chưa
                     cursor.execute(
                         "SELECT tien_dien, san_luong_kwh FROM monthly_bill WHERE userevn=? AND thang=? AND nam=?",
@@ -820,6 +864,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.debug(f"{action.capitalize()} hóa đơn: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
                     else:
                         _LOGGER.debug(f"Hóa đơn unchanged: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
+                else:
+                    _LOGGER.debug(f"Skipping bill: thang={thang}, nam={nam}, no valid data (tien={tien_dien}, sl={san_luong})")
 
             conn.commit()
             conn.close()
