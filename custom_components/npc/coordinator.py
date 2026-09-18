@@ -159,6 +159,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             if len(missing_daily_periods) > 0:
                 _LOGGER.info(f"Found {len(missing_daily_periods)} missing daily periods for {self.customer_id}")
+                # Log first 10 missing dates for debugging
+                sample_dates = missing_daily_periods[:10]
+                _LOGGER.debug(f"Sample missing dates: {sample_dates}")
 
                 # Group missing dates by month (từng tháng một)
                 from collections import defaultdict
@@ -390,6 +393,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        # Lấy ngày gần nhất có BẤT KỲ record nào (dù rỗng)
+        cursor.execute(
+            "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ?",
+            (self.customer_id,)
+        )
+        result = cursor.fetchone()
+        latest_any_date_str = result[0] if result and result[0] else None
+        
         # Lấy ngày gần nhất có dữ liệu thực sự (có chi_so hoặc dien_tieu_thu_kwh)
         cursor.execute(
             "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL)",
@@ -399,7 +410,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         latest_date_str = result[0] if result and result[0] else None
         
         _LOGGER.debug(f"Database path = {self.db_path}")
-        _LOGGER.debug(f"Latest date in database for {self.customer_id}: {latest_date_str}")
+        _LOGGER.debug(f"Latest ANY date in database for {self.customer_id}: {latest_any_date_str}")
+        _LOGGER.debug(f"Latest valid date in database for {self.customer_id}: {latest_date_str}")
         
         # Debug: Count total records and records with actual data
         cursor.execute(
@@ -417,8 +429,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         if total_count != data_count:
             _LOGGER.debug(f"Total records for {self.customer_id}: {total_count}, records with data: {data_count}")
 
+        # Nếu không có dữ liệu thực sự hoặc dữ liệu quá cũ (trước 2025), bắt đầu từ 01/01/2025
         if not latest_date_str:
-            # Không có dữ liệu nào, bắt đầu từ 01/01/2025
             first_date = datetime(2025, 1, 1)
             _LOGGER.debug(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
         else:
@@ -433,16 +445,19 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         while date_cursor <= current_date:
             ngay = date_cursor.strftime("%d-%m-%Y")
 
+            # Coi record rỗng (không có chi_so và dien_tieu_thu_kwh) là missing
             cursor.execute(
-                "SELECT 1 FROM daily_consumption WHERE userevn = ? AND ngay = ?",
+                "SELECT chi_so, dien_tieu_thu_kwh FROM daily_consumption WHERE userevn = ? AND ngay = ?",
                 (self.customer_id, ngay)
             )
-            if not cursor.fetchone():
+            result = cursor.fetchone()
+            if not result or (result[0] is None and result[1] is None):
                 missing.append(ngay)
 
             date_cursor += timedelta(days=1)
 
         conn.close()
+        _LOGGER.debug(f"Found {len(missing)} missing daily periods for {self.customer_id}")
         return missing
 
     def _get_missing_bill_months(self):
