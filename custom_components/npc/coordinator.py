@@ -110,8 +110,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             start_date_daily = datetime(2025, 1, 1)
             batch_days = 10
 
-            # Tạm thời disable cleanup retention để tránh mất dữ liệu
-            # await self.hass.async_add_executor_job(self._cleanup_history_retention)
+            # Cleanup invalid data (dữ liệu lộn xộn từ các lần sync trước)
+            await self.hass.async_add_executor_job(self._cleanup_invalid_daily_data)
 
             # Check missing daily periods
             missing_daily_periods = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
@@ -200,6 +200,32 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         """)
         conn.commit()
         conn.close()
+
+    def _cleanup_invalid_daily_data(self):
+        """Clean up invalid/duplicate daily data that might cause sync issues."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Remove duplicate entries (keep the latest one based on chi_so)
+            cursor.execute("""
+                DELETE FROM daily_consumption 
+                WHERE rowid NOT IN (
+                    SELECT MAX(rowid) 
+                    FROM daily_consumption 
+                    WHERE userevn = ? 
+                    GROUP BY userevn, ngay
+                )
+            """, (self.customer_id,))
+            
+            deleted = cursor.rowcount
+            if deleted > 0:
+                _LOGGER.info(f"Cleaned up {deleted} duplicate daily records for {self.customer_id}")
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            _LOGGER.error(f"Error cleaning up invalid daily data: {e}", exc_info=True)
 
     def _cleanup_history_retention(self):
         """Keep only records from 2025 onward."""
@@ -308,9 +334,10 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Lấy tất cả các ngày có dữ liệu, sort theo ngày
+        # Lấy tất cả các ngày có dữ liệu, sort theo chronological order
+        # SQL ORDER BY with dd-mm-yyyy format doesn't sort chronologically, so we sort in Python
         cursor.execute(
-            "SELECT ngay FROM daily_consumption WHERE userevn = ? ORDER BY ngay",
+            "SELECT ngay FROM daily_consumption WHERE userevn = ?",
             (self.customer_id,)
         )
         existing_dates = [row[0] for row in cursor.fetchall()]
@@ -321,6 +348,23 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         if existing_dates:
             _LOGGER.info(f"DEBUG: First 5 dates: {existing_dates[:5]}")
             _LOGGER.info(f"DEBUG: Last 5 dates: {existing_dates[-5:]}")
+        
+        # FIX: Sort dates chronologically to handle mixed data
+        # Convert string dates to datetime objects for proper sorting
+        sorted_dates = []
+        for date_str in existing_dates:
+            try:
+                dt = datetime.strptime(date_str, "%d-%m-%Y")
+                sorted_dates.append((dt, date_str))
+            except Exception as e:
+                _LOGGER.debug(f"Could not parse date {date_str}: {e}")
+        
+        # Sort by datetime
+        sorted_dates.sort(key=lambda x: x[0])
+        existing_dates = [date_str for dt, date_str in sorted_dates]
+        
+        # FIX: Remove duplicate dates (if any)
+        existing_dates = list(dict.fromkeys(existing_dates))
 
         if not existing_dates:
             # Không có dữ liệu nào, bắt đầu từ 01/01/2025
@@ -346,6 +390,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             first_date = consecutive_date + timedelta(days=1)
             _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest consecutive data {consecutive_date.strftime('%d/%m/%Y')})")
+            
+            # DEBUG: Log kết quả check consecutive
+            _LOGGER.info(f"DEBUG: Latest date: {latest_date_str}, Consecutive date: {consecutive_date.strftime('%d-%m-%Y')}, Start date: {first_date.strftime('%d-%m-%Y')}")
+            
+            # SAFETY: If first_date is too far back (e.g., before 2025), use 01/01/2025
+            if first_date.year < 2025:
+                _LOGGER.warning(f"Start date {first_date.strftime('%d/%m/%Y')} is before 2025, using 01/01/2025 instead")
+                first_date = datetime(2025, 1, 1)
 
         current_date = today
 
