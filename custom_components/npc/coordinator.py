@@ -110,8 +110,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             start_date_daily = datetime(2025, 1, 1)
             batch_days = 10
 
-            # Cleanup invalid data (dữ liệu lộn xộn từ các lần sync trước)
-            await self.hass.async_add_executor_job(self._cleanup_invalid_daily_data)
+            # Tạm thời disable cleanup retention để tránh mất dữ liệu
+            # await self.hass.async_add_executor_job(self._cleanup_history_retention)
 
             # Check missing daily periods
             missing_daily_periods = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
@@ -201,32 +201,6 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn.commit()
         conn.close()
 
-    def _cleanup_invalid_daily_data(self):
-        """Clean up invalid/duplicate daily data that might cause sync issues."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Remove duplicate entries (keep the latest one based on chi_so)
-            cursor.execute("""
-                DELETE FROM daily_consumption 
-                WHERE rowid NOT IN (
-                    SELECT MAX(rowid) 
-                    FROM daily_consumption 
-                    WHERE userevn = ? 
-                    GROUP BY userevn, ngay
-                )
-            """, (self.customer_id,))
-            
-            deleted = cursor.rowcount
-            if deleted > 0:
-                _LOGGER.info(f"Cleaned up {deleted} duplicate daily records for {self.customer_id}")
-            
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            _LOGGER.error(f"Error cleaning up invalid daily data: {e}", exc_info=True)
-
     def _cleanup_history_retention(self):
         """Keep only records from 2025 onward."""
         today = datetime.now()
@@ -257,49 +231,60 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _get_missing_monthly_periods(self):
         """Identify missing monthly periods only from 2025 to now.
-        Chỉ lấy những tháng chưa có dữ liệu tiêu thụ (san_luong_kwh) hoặc thiếu dữ liệu.
-        Đặc biệt ưu tiên đồng bộ lại các tháng từ 01/2025-05/2025 nếu bị thiếu.
+        Tìm tháng gần nhất có dữ liệu và lấy từ tháng tiếp theo để tránh lấy trùng.
+        Nếu có tháng 1,2,5,6 thì tháng gần nhất là tháng 6, sẽ lấy từ tháng 7.
         Chỉ lấy đến tháng trước tháng hiện tại (tháng hiện tại chưa hết kỳ).
         """
         missing = []
         today = datetime.now()
 
-        # Chỉ lấy từ tháng 1/2025 đến tháng trước tháng hiện tại
-        first_month = datetime(2025, 1, 1)
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Lấy tháng gần nhất có dữ liệu (tháng cuối cùng trong database có san_luong_kwh)
+        cursor.execute(
+            "SELECT MAX(nam * 12 + thang) as month_num, MAX(nam) as max_year, MAX(thang) as max_month FROM monthly_bill WHERE userevn = ? AND san_luong_kwh IS NOT NULL AND san_luong_kwh > 0",
+            (self.customer_id,)
+        )
+        result = cursor.fetchone()
         
+        _LOGGER.info(f"DEBUG: Latest month in database for {self.customer_id}: {result}")
+
+        if not result or not result[0]:
+            # Không có dữ liệu nào, bắt đầu từ tháng 1/2025
+            first_month = datetime(2025, 1, 1)
+            _LOGGER.info(f"No existing monthly data found, starting from {first_month.strftime('%m/%Y')}")
+        else:
+            # Có dữ liệu, bắt đầu từ tháng tiếp theo của tháng gần nhất
+            month_num = result[0]  # nam * 12 + thang
+            next_month_num = month_num + 1
+            next_year = (next_month_num - 1) // 12
+            next_month = (next_month_num - 1) % 12 + 1
+            first_month = datetime(next_year, next_month, 1)
+            _LOGGER.info(f"Starting monthly data sync from {first_month.strftime('%m/%Y')} (after latest data)")
+
         # Tính tháng trước tháng hiện tại (tháng hiện tại chưa hết kỳ nên không lấy)
         if today.month == 1:
             last_month = datetime(today.year - 1, 12, 1)
         else:
             last_month = datetime(today.year, today.month - 1, 1)
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        # Đảm bảo không lùi về năm trước 2025
+        if first_month.year < 2025:
+            first_month = datetime(2025, 1, 1)
 
         month_cursor = first_month
         while month_cursor <= last_month:
             month = month_cursor.month
             year = month_cursor.year
 
-            # Đảm bảo không lùi về năm trước 2025
-            if year < 2025:
-                if month_cursor.month == 12:
-                    month_cursor = datetime(month_cursor.year + 1, 1, 1)
-                else:
-                    month_cursor = datetime(month_cursor.year, month_cursor.month + 1, 1)
-                continue
-
-            # Kiểm tra tháng đã có san_luong_kwh chưa
+            # Double-check tháng này thực sự chưa có dữ liệu (để tránh race condition)
             cursor.execute(
                 "SELECT san_luong_kwh, tien_dien FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ?",
                 (self.customer_id, month, year)
             )
             row = cursor.fetchone()
             
-            # Thêm vào missing nếu:
-            # 1. Không có record nào
-            # 2. Không có san_luong_kwh
-            # 3. Cả san_luong_kwh và tien_dien đều là NULL
             should_add = False
             if not row:
                 should_add = True
@@ -313,7 +298,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             
             if should_add:
                 missing.append((month, year))
-                _LOGGER.debug(f"Added missing period: {month}/{year} - san_luong={row[0] if row else None}, tien_dien={row[1] if row else None}")
+                _LOGGER.debug(f"Added missing period: {month}/{year}")
 
             if month_cursor.month == 12:
                 month_cursor = datetime(month_cursor.year + 1, 1, 1)
@@ -325,8 +310,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _get_missing_daily_periods(self):
         """Identify missing daily periods only from 2025 to now.
-        Chỉ lấy các ngày thiếu sau ngày liên tiếp gần nhất có dữ liệu.
-        Nếu ngày 5,6 thiếu nhưng ngày 7 có, thì bắt đầu từ ngày 7+1 (không lấy 5,6).
+        Tìm ngày gần nhất có dữ liệu và lấy từ ngày tiếp theo để tránh lấy trùng.
+        Nếu có ngày 1,2,5,6 thì ngày gần nhất là ngày 6, sẽ lấy từ ngày 7.
         """
         missing = []
         today = datetime.now()
@@ -334,70 +319,26 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Lấy tất cả các ngày có dữ liệu, sort theo chronological order
-        # SQL ORDER BY with dd-mm-yyyy format doesn't sort chronologically, so we sort in Python
+        # Lấy ngày gần nhất có dữ liệu (ngày cuối cùng trong database)
         cursor.execute(
-            "SELECT ngay FROM daily_consumption WHERE userevn = ?",
+            "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ?",
             (self.customer_id,)
         )
-        existing_dates = [row[0] for row in cursor.fetchall()]
+        result = cursor.fetchone()
+        latest_date_str = result[0] if result and result[0] else None
         
-        # DEBUG: Log database path và số lượng ngày đã lưu
         _LOGGER.info(f"DEBUG: Database path = {self.db_path}")
-        _LOGGER.info(f"DEBUG: Found {len(existing_dates)} existing dates for {self.customer_id}")
-        if existing_dates:
-            _LOGGER.info(f"DEBUG: First 5 dates: {existing_dates[:5]}")
-            _LOGGER.info(f"DEBUG: Last 5 dates: {existing_dates[-5:]}")
-        
-        # FIX: Sort dates chronologically to handle mixed data
-        # Convert string dates to datetime objects for proper sorting
-        sorted_dates = []
-        for date_str in existing_dates:
-            try:
-                dt = datetime.strptime(date_str, "%d-%m-%Y")
-                sorted_dates.append((dt, date_str))
-            except Exception as e:
-                _LOGGER.debug(f"Could not parse date {date_str}: {e}")
-        
-        # Sort by datetime
-        sorted_dates.sort(key=lambda x: x[0])
-        existing_dates = [date_str for dt, date_str in sorted_dates]
-        
-        # FIX: Remove duplicate dates (if any)
-        existing_dates = list(dict.fromkeys(existing_dates))
+        _LOGGER.info(f"DEBUG: Latest date in database for {self.customer_id}: {latest_date_str}")
 
-        if not existing_dates:
+        if not latest_date_str:
             # Không có dữ liệu nào, bắt đầu từ 01/01/2025
             first_date = datetime(2025, 1, 1)
             _LOGGER.info(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
         else:
-            # Tìm ngày liên tiếp gần nhất có dữ liệu (không có gap > 1 ngày)
-            # Scan từ cuối về đầu để tìm ngày liên tiếp
-            latest_date_str = existing_dates[-1]
+            # Có dữ liệu, bắt đầu từ ngày tiếp theo của ngày gần nhất
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
-
-            # Kiểm tra xem các ngày trước đó có liên tiếp không
-            consecutive_date = latest_date
-            for i in range(len(existing_dates) - 2, -1, -1):
-                prev_date_str = existing_dates[i]
-                prev_date = datetime.strptime(prev_date_str, "%d-%m-%Y")
-
-                # Nếu ngày trước không phải ngày liền trước, dừng lại
-                if (consecutive_date - prev_date).days != 1:
-                    break
-
-                consecutive_date = prev_date
-
-            first_date = consecutive_date + timedelta(days=1)
-            _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest consecutive data {consecutive_date.strftime('%d/%m/%Y')})")
-            
-            # DEBUG: Log kết quả check consecutive
-            _LOGGER.info(f"DEBUG: Latest date: {latest_date_str}, Consecutive date: {consecutive_date.strftime('%d-%m-%Y')}, Start date: {first_date.strftime('%d-%m-%Y')}")
-            
-            # SAFETY: If first_date is too far back (e.g., before 2025), use 01/01/2025
-            if first_date.year < 2025:
-                _LOGGER.warning(f"Start date {first_date.strftime('%d/%m/%Y')} is before 2025, using 01/01/2025 instead")
-                first_date = datetime(2025, 1, 1)
+            first_date = latest_date + timedelta(days=1)
+            _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
 
         current_date = today
 
