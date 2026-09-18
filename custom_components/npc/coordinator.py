@@ -283,10 +283,17 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Lấy tháng gần nhất có dữ liệu (tháng cuối cùng trong database có san_luong_kwh)
         cursor.execute(
-            "SELECT MAX(nam * 12 + thang) as month_num, MAX(nam) as max_year, MAX(thang) as max_month FROM monthly_bill WHERE userevn = ? AND san_luong_kwh IS NOT NULL AND san_luong_kwh > 0",
+            "SELECT nam, thang FROM monthly_bill WHERE userevn = ? AND san_luong_kwh IS NOT NULL AND san_luong_kwh > 0 ORDER BY nam DESC, thang DESC LIMIT 1",
             (self.customer_id,)
         )
         result = cursor.fetchone()
+        
+        # Convert sang format tương thích với code cũ
+        if result:
+            month_num = result[0] * 12 + result[1]
+            max_year = result[0]
+            max_month = result[1]
+            result = (month_num, max_year, max_month)
         
         _LOGGER.info(f"DEBUG: Latest month in database for {self.customer_id}: {result}")
 
@@ -359,8 +366,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         cursor = conn.cursor()
 
         # Lấy ngày gần nhất có dữ liệu thực sự (có chi_so hoặc dien_tieu_thu_kwh)
+        # Cần convert dd-mm-yyyy sang yyyy-mm-dd để MAX() hoạt động đúng
         cursor.execute(
-            "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL)",
+            "SELECT ngay FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL) ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 1",
             (self.customer_id,)
         )
         result = cursor.fetchone()
