@@ -314,6 +314,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             (self.customer_id,)
         )
         existing_dates = [row[0] for row in cursor.fetchall()]
+        
+        # DEBUG: Log database path và số lượng ngày đã lưu
+        _LOGGER.info(f"DEBUG: Database path = {self.db_path}")
+        _LOGGER.info(f"DEBUG: Found {len(existing_dates)} existing dates for {self.customer_id}")
+        if existing_dates:
+            _LOGGER.info(f"DEBUG: First 5 dates: {existing_dates[:5]}")
+            _LOGGER.info(f"DEBUG: Last 5 dates: {existing_dates[-5:]}")
 
         if not existing_dates:
             # Không có dữ liệu nào, bắt đầu từ 01/01/2025
@@ -528,6 +535,17 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             conn.commit()
             conn.close()
             _LOGGER.info(f"Saved {saved_count} daily records for {self.customer_id}, skipped {skipped_count}")
+            
+            # DEBUG: Verify data was actually saved
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM daily_consumption WHERE userevn = ?",
+                (self.customer_id,)
+            )
+            count = cursor.fetchone()[0]
+            _LOGGER.info(f"DEBUG: After save, total records in DB for {self.customer_id}: {count}")
+            conn.close()
 
         except Exception as e:
             _LOGGER.error(f"Error saving daily data: {e}", exc_info=True)
