@@ -356,8 +356,10 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         return missing
 
     def _get_missing_daily_periods(self):
-        """Identify missing daily periods only in the last 10 days from the latest database entry.
-        Chỉ tìm thiếu trong 10 ngày gần nhất tính từ ngày cuối cùng đã lưu trong database.
+        """Identify missing daily periods only in the last 10 days from today.
+        Chỉ tìm thiếu trong 10 ngày gần nhất tính từ hôm nay (lùi 10 ngày).
+        Nếu ngày cuối trong database nằm ngoài khoảng 10 ngày này, check từ ngày đó đến hôm nay.
+        Nếu nằm trong khoảng này, check toàn bộ 10 ngày.
         """
         missing = []
         today = datetime.now()
@@ -366,7 +368,6 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         cursor = conn.cursor()
 
         # Lấy ngày gần nhất có dữ liệu thực sự (có chi_so hoặc dien_tieu_thu_kwh)
-        # Cần convert dd-mm-yyyy sang yyyy-mm-dd để MAX() hoạt động đúng
         cursor.execute(
             "SELECT ngay FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL) ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 1",
             (self.customer_id,)
@@ -374,24 +375,36 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         result = cursor.fetchone()
         latest_date_str = result[0] if result and result[0] else None
         
-        _LOGGER.info(f"DEBUG: Latest date in database for {self.customer_id}: {latest_date_str}")
-
+        # Check 10 ngày gần nhất từ hôm nay (lùi 10 ngày)
+        days_to_check = 10
+        ten_days_ago = today - timedelta(days=days_to_check)
+        
         if not latest_date_str:
-            # Không có dữ liệu nào, bắt đầu từ 10 ngày trước đến hôm nay
-            days_to_check = 10
-            start_date = today - timedelta(days=days_to_check)
+            # Không có dữ liệu nào, check toàn bộ 10 ngày
+            start_date = ten_days_ago
             _LOGGER.info(f"No existing daily data found, checking last {days_to_check} days from {start_date.strftime('%d/%m/%Y')}")
         else:
-            # Có dữ liệu, bắt đầu từ ngày tiếp theo của ngày gần nhất
+            # Có dữ liệu, parse ngày gần nhất
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
-            start_date = latest_date + timedelta(days=1)
-            _LOGGER.info(f"Checking daily data from {start_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
-
-        # Chỉ kiểm tra tối đa 10 ngày từ start_date hoặc đến ngày hiện tại
-        days_to_check = 10
-        end_date = min(start_date + timedelta(days=days_to_check - 1), today)
+            
+            # Nếu ngày gần nhất nằm ngoài khoảng 10 ngày (cách > 10 ngày), check từ ngày đó đến hôm nay
+            if latest_date < ten_days_ago:
+                start_date = latest_date + timedelta(days=1)
+                _LOGGER.info(f"Latest data {latest_date_str} is older than {days_to_check} days, checking from {start_date.strftime('%d/%m/%Y')} to today")
+            else:
+                # Ngày gần nhất nằm trong khoảng 10 ngày, check toàn bộ 10 ngày
+                start_date = ten_days_ago
+                _LOGGER.info(f"Latest data {latest_date_str} is within last {days_to_check} days, checking last {days_to_check} days from {start_date.strftime('%d/%m/%Y')}")
         
-        _LOGGER.info(f"Checking for missing daily data: {start_date.strftime('%d/%m/%Y')} -> {end_date.strftime('%d/%m/%Y')} (max {days_to_check} days)")
+        end_date = today
+        
+        # Nếu start_date > today thì không cần check
+        if start_date > today:
+            _LOGGER.info(f"Data is already up to date, no missing data needed")
+            conn.close()
+            return []
+        
+        _LOGGER.info(f"Checking for missing daily data: {start_date.strftime('%d/%m/%Y')} -> {end_date.strftime('%d/%m/%Y')}")
 
         date_cursor = start_date
         while date_cursor <= end_date:
