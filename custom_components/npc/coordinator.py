@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 import sqlite3
 import os
-import asyncio
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -44,9 +43,6 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             if not self.api.access_token:
                 if not await self.api.login():
                     raise UpdateFailed("Failed to login")
-            
-            # Độ trễ 1s sau login
-            await asyncio.sleep(1)
 
             # 3. Fetch power outage schedule FIRST.
             # This must not be blocked by the much heavier historical sync below.
@@ -54,25 +50,22 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             outage_from = today.strftime("%d/%m/%Y")
             outage_to = (today + timedelta(days=30)).strftime("%d/%m/%Y")
             try:
-                _LOGGER.debug(
+                _LOGGER.info(
                     f"Fetching power outage schedule for {self.customer_id}: "
                     f"{outage_from} -> {outage_to}"
                 )
                 outage_data = await self.api.get_ngungcapdien(outage_from, outage_to)
                 if outage_data is not None and isinstance(outage_data.get("data"), list):
                     await self._save_outage_data(outage_data["data"])
-                    _LOGGER.debug(
+                    _LOGGER.info(
                         f"Power outage sync completed for {self.customer_id}: "
                         f"{len(outage_data['data'])} records"
                     )
                 else:
-                    _LOGGER.debug(
+                    _LOGGER.warning(
                         f"Power outage API returned no usable data for {self.customer_id}: "
                         f"{outage_data!r}"
                     )
-                
-                # Độ trễ 1s giữa các API calls
-                await asyncio.sleep(1)
             except Exception as outage_err:
                 # Do not let outage API problems prevent the rest of EVN data from updating.
                 _LOGGER.error(
@@ -83,7 +76,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # 4. Fetch monthly history data (History from 2016 to now) - ƯU TIÊN ĐẦU TIÊN
             # Dữ liệu chisothang từ API cũng chính xác, ưu tiên trước daily data
             # Chỉ lấy các tháng chưa có trong database
-            _LOGGER.debug(f"Syncing monthly history for {self.customer_id}")
+            _LOGGER.info(f"Syncing monthly history for {self.customer_id}")
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
@@ -92,37 +85,25 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.info(f"Found {len(missing_periods)} missing monthly periods for {self.customer_id}")
 
                 for month, year in missing_periods:
-                    _LOGGER.debug(f"Fetching missing monthly data for {month}/{year}")
+                    _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
                     m_data = await self.api.get_chisothang(month, year)
                     if m_data and m_data.get("data"):
                         await self._save_monthly_data(m_data["data"], month, year)
-                        _LOGGER.debug(f"Successfully saved monthly data for {month}/{year}")
+                        _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
                     else:
                         _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
-                    
-                    # Độ trễ 1s giữa các API calls monthly
-                    await asyncio.sleep(1)
             else:
-                _LOGGER.debug(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
-
-            # Độ trễ 1s sau monthly history sync
-            await asyncio.sleep(1)
+                _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
 
             # 5. Fetch bill data (hóa đơn) - ƯU TIÊN THỨ HAI
             # Dữ liệu hóa đơn từ API là chính xác nhất, ưu tiên trước daily data
             # Chạy sau monthly history để không làm ảnh hưởng việc sync lịch sử
             bill_data = await self.api.get_hoadon()
             if bill_data and bill_data.get("data"):
-                _LOGGER.debug(f"Bill data received: {len(bill_data.get('data', []))} records")
+                _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
                 await self._save_bill_data(bill_data["data"])
                 await self._save_hoadon_to_monthly_bill(bill_data["data"])
-                _LOGGER.debug(f"Bill data sync completed for {self.customer_id}")
-            
-            # Độ trễ 1s sau bill data API call
-            await asyncio.sleep(1)
-            
-            # Độ trễ 1s sau bill data
-            await asyncio.sleep(1)
+                _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
@@ -131,21 +112,15 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.info(f"Found {len(missing_periods)} missing monthly periods for {self.customer_id}")
 
                 for month, year in missing_periods:
-                    _LOGGER.debug(f"Fetching missing monthly data for {month}/{year}")
+                    _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
                     m_data = await self.api.get_chisothang(month, year)
                     if m_data and m_data.get("data"):
                         await self._save_monthly_data(m_data["data"], month, year)
-                        _LOGGER.debug(f"Successfully saved monthly data for {month}/{year}")
+                        _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
                     else:
                         _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
-                    
-                    # Độ trễ 1s giữa các API calls monthly (lần 2)
-                    await asyncio.sleep(1)
             else:
-                _LOGGER.debug(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
-
-            # Độ trễ 1s sau monthly history sync lần 2
-            await asyncio.sleep(1)
+                _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
 
             # 6. Fetch daily data by month (từng tháng một) để tránh lỗi date calculation
             # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
@@ -154,35 +129,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # Tạm thời disable cleanup retention để tránh mất dữ liệu
             # await self.hass.async_add_executor_job(self._cleanup_history_retention)
 
-            # LUÔN sync lại 5 ngày gần nhất (hôm nay + 4 ngày trước) để update dữ liệu mới nhất
-            # EVN có thể cập nhật lại dữ liệu vài ngày gần nhất
-            today = datetime.now()
-            force_sync_dates = []
-            for i in range(5):  # Hôm nay + 4 ngày trước
-                date_to_sync = today - timedelta(days=i)
-                date_str = date_to_sync.strftime("%d-%m-%Y")
-                force_sync_dates.append(date_str)
-            
-            # Chỉ dùng missing periods cho lần sync đầu tiên (không có dữ liệu nào)
-            # Kiểm tra xem database có dữ liệu daily consumption không
-            has_daily_data = await self.hass.async_add_executor_job(self._check_has_daily_data)
-            
-            if not has_daily_data:
-                # Lần sync đầu tiên: lấy missing periods trong 10 ngày
-                missing_daily_periods = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
-                # Thêm force_sync_dates vào
-                for date_str in force_sync_dates:
-                    if date_str not in missing_daily_periods:
-                        missing_daily_periods.append(date_str)
-            else:
-                # Sync thường: chỉ sync 5 ngày gần nhất
-                missing_daily_periods = force_sync_dates
-            
+            # Check missing daily periods
+            missing_daily_periods = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
+
             if len(missing_daily_periods) > 0:
                 _LOGGER.info(f"Found {len(missing_daily_periods)} missing daily periods for {self.customer_id}")
-                # Log first 10 missing dates for debugging
-                sample_dates = missing_daily_periods[:10]
-                _LOGGER.debug(f"Sample missing dates: {sample_dates}")
 
                 # Group missing dates by month (từng tháng một)
                 from collections import defaultdict
@@ -213,17 +164,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     from_date = f"01/{month:02d}/{year}"
                     to_date = f"{last_day:02d}/{month:02d}/{year}"
                     
-                    _LOGGER.debug(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
+                    _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
                     daily_data = await self.api.get_chisongay(from_date, to_date)
 
                     if daily_data and daily_data.get("data"):
                         batch_records = len(daily_data["data"])
                         all_daily_data.extend(daily_data["data"])
+                        _LOGGER.info(f"Batch {batch_count}: Received {batch_records} daily records")
                     else:
                         failed_batches += 1
-                    
-                    # Độ trễ 1s giữa các API calls daily data
-                    await asyncio.sleep(1)
+                        _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
 
                 if all_daily_data:
                     _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
@@ -231,10 +181,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 else:
                     _LOGGER.warning(f"No daily data collected for {self.customer_id}, skipping daily data save (failed batches: {failed_batches})")
             else:
-                _LOGGER.debug(f"No missing daily periods found for {self.customer_id}, skipping API calls")
-
-            # Độ trễ 1s sau daily data sync
-            await asyncio.sleep(1)
+                _LOGGER.info(f"No missing daily periods found for {self.customer_id}, skipping API calls")
 
             # 7. Power outage was synchronized at the start of this update cycle.
 
@@ -283,16 +230,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         """)
         
         # Xóa các record rỗng trong daily_consumption (không có chi_so và dien_tieu_thu_kwh)
-        # CHỈ xóa cho user hiện tại, không ảnh hưởng user khác
         cursor.execute("""
             DELETE FROM daily_consumption 
-            WHERE userevn = ? 
-            AND (chi_so IS NULL OR chi_so = 0) 
-            AND (dien_tieu_thu_kwh IS NULL OR dien_tieu_thu_kwh = 0)
-        """, (self.customer_id,))
+            WHERE chi_so IS NULL AND dien_tieu_thu_kwh IS NULL
+        """)
         deleted_count = cursor.rowcount
         if deleted_count > 0:
-            _LOGGER.debug(f"Cleaned up {deleted_count} empty records from daily_consumption for {self.customer_id}")
+            _LOGGER.info(f"Cleaned up {deleted_count} empty records from daily_consumption")
         
         conn.commit()
         conn.close()
@@ -344,15 +288,12 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         )
         result = cursor.fetchone()
         
-        if result and result[0]:
-            _LOGGER.debug(f"Latest month in database for {self.customer_id}: {result}")
-        else:
-            _LOGGER.debug(f"No existing monthly data found for {self.customer_id}, starting from 01/2025")
+        _LOGGER.info(f"DEBUG: Latest month in database for {self.customer_id}: {result}")
 
         if not result or not result[0]:
             # Không có dữ liệu nào, bắt đầu từ tháng 1/2025
             first_month = datetime(2025, 1, 1)
-            _LOGGER.debug(f"No existing monthly data found, starting from {first_month.strftime('%m/%Y')}")
+            _LOGGER.info(f"No existing monthly data found, starting from {first_month.strftime('%m/%Y')}")
         else:
             # Có dữ liệu, bắt đầu từ tháng tiếp theo của tháng gần nhất
             month_num = result[0]  # nam * 12 + thang
@@ -360,7 +301,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             next_year = (next_month_num - 1) // 12
             next_month = (next_month_num - 1) % 12 + 1
             first_month = datetime(next_year, next_month, 1)
-            _LOGGER.debug(f"Starting monthly data sync from {first_month.strftime('%m/%Y')} (after latest data)")
+            _LOGGER.info(f"Starting monthly data sync from {first_month.strftime('%m/%Y')} (after latest data)")
 
         # Tính tháng trước tháng hiện tại (tháng hiện tại chưa hết kỳ nên không lấy)
         if today.month == 1:
@@ -397,6 +338,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             
             if should_add:
                 missing.append((month, year))
+                _LOGGER.debug(f"Added missing period: {month}/{year}")
 
             if month_cursor.month == 12:
                 month_cursor = datetime(month_cursor.year + 1, 1, 1)
@@ -407,27 +349,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         return missing
 
     def _get_missing_daily_periods(self):
-        """Identify missing daily periods only within 10 days from now.
+        """Identify missing daily periods only from 2025 to now.
         Tìm ngày gần nhất có dữ liệu và lấy từ ngày tiếp theo để tránh lấy trùng.
-        Bỏ qua các ngày cũ hơn 10 ngày so với hiện tại.
+        Nếu có ngày 1,2,5,6 thì ngày gần nhất là ngày 6, sẽ lấy từ ngày 7.
         """
         missing = []
         today = datetime.now()
-        
-        # Chỉ sync trong 10 ngày gần nhất
-        cutoff_date = today - timedelta(days=10)
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Lấy ngày gần nhất có BẤT KỲ record nào (dù rỗng)
-        cursor.execute(
-            "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ?",
-            (self.customer_id,)
-        )
-        result = cursor.fetchone()
-        latest_any_date_str = result[0] if result and result[0] else None
-        
         # Lấy ngày gần nhất có dữ liệu thực sự (có chi_so hoặc dien_tieu_thu_kwh)
         cursor.execute(
             "SELECT MAX(ngay) FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL)",
@@ -436,10 +367,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         result = cursor.fetchone()
         latest_date_str = result[0] if result and result[0] else None
         
-        _LOGGER.debug(f"Database path = {self.db_path}")
-        _LOGGER.debug(f"Latest ANY date in database for {self.customer_id}: {latest_any_date_str}")
-        _LOGGER.debug(f"Latest valid date in database for {self.customer_id}: {latest_date_str}")
-        _LOGGER.debug(f"Syncing daily data from {cutoff_date.strftime('%d/%m/%Y')} to {today.strftime('%d/%m/%Y')} (10 days window)")
+        _LOGGER.info(f"DEBUG: Database path = {self.db_path}")
+        _LOGGER.info(f"DEBUG: Latest date in database for {self.customer_id}: {latest_date_str}")
         
         # Debug: Count total records and records with actual data
         cursor.execute(
@@ -454,24 +383,17 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         )
         data_count = cursor.fetchone()[0]
         
-        if total_count != data_count:
-            _LOGGER.debug(f"Total records for {self.customer_id}: {total_count}, records with data: {data_count}")
+        _LOGGER.info(f"DEBUG: Total records for {self.customer_id}: {total_count}, records with data: {data_count}")
 
-        # Bắt đầu từ cutoff_date (10 ngày trước hôm nay)
-        first_date = cutoff_date
-        
-        # Nếu không có dữ liệu thực sự hoặc dữ liệu quá cũ (trước cutoff_date), bắt đầu từ cutoff_date
         if not latest_date_str:
-            _LOGGER.debug(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
+            # Không có dữ liệu nào, bắt đầu từ 01/01/2025
+            first_date = datetime(2025, 1, 1)
+            _LOGGER.info(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
         else:
-            # Có dữ liệu, bắt đầu từ max(latest_date + 1, cutoff_date)
+            # Có dữ liệu, bắt đầu từ ngày tiếp theo của ngày gần nhất
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
-            if latest_date < cutoff_date:
-                first_date = cutoff_date
-                _LOGGER.debug(f"Latest data is too old, starting from cutoff date {first_date.strftime('%d/%m/%Y')}")
-            else:
-                first_date = latest_date + timedelta(days=1)
-                _LOGGER.debug(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
+            first_date = latest_date + timedelta(days=1)
+            _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
 
         current_date = today
 
@@ -479,34 +401,17 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         while date_cursor <= current_date:
             ngay = date_cursor.strftime("%d-%m-%Y")
 
-            # Coi record rỗng (không có chi_so và dien_tieu_thu_kwh) là missing
             cursor.execute(
-                "SELECT chi_so, dien_tieu_thu_kwh FROM daily_consumption WHERE userevn = ? AND ngay = ?",
+                "SELECT 1 FROM daily_consumption WHERE userevn = ? AND ngay = ?",
                 (self.customer_id, ngay)
             )
-            result = cursor.fetchone()
-            if not result or (result[0] is None and result[1] is None):
+            if not cursor.fetchone():
                 missing.append(ngay)
 
             date_cursor += timedelta(days=1)
 
         conn.close()
-        _LOGGER.debug(f"Found {len(missing)} missing daily periods for {self.customer_id} (within 10 days)")
         return missing
-
-    def _check_has_daily_data(self):
-        """Check if database has any daily consumption data for this user."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute(
-            "SELECT COUNT(*) FROM daily_consumption WHERE userevn = ?",
-            (self.customer_id,)
-        )
-        count = cursor.fetchone()[0]
-        
-        conn.close()
-        return count > 0
 
     def _get_missing_bill_months(self):
         """Identify months that are missing bill data (tien_dien)."""
@@ -561,7 +466,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
         conn.commit()
         conn.close()
-        _LOGGER.warning(f"Force resync: Deleted all data for {self.customer_id}, will sync from scratch")
+        _LOGGER.info(f"Force resync: Deleted all data for {self.customer_id}, will sync from scratch")
         
         # Reset coordinator state để đảm bảo sync lại từ đầu
         self.data = {}
@@ -587,23 +492,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     PRIMARY KEY (userevn, ngay)
                 )
             """)
-            
-            # Cleanup: Xóa record rỗng trước khi sync mới
-            cursor.execute("""
-                DELETE FROM daily_consumption 
-                WHERE userevn = ? AND (chi_so IS NULL OR chi_so = 0) 
-                AND (dien_tieu_thu_kwh IS NULL OR dien_tieu_thu_kwh = 0)
-            """, (self.customer_id,))
-            deleted_count = cursor.rowcount
-            if deleted_count > 0:
-                _LOGGER.debug(f"Cleaned up {deleted_count} empty records from daily_consumption for {self.customer_id}")
 
             # API returns data from newest to oldest (index 0 is newest)
             # But we need to process from oldest to newest to calculate daily consumption
             # So reverse the list first, then sort by date to be safe
             sorted_data = sorted(data, key=lambda x: self._parse_date_for_sort(record=x))
             
-            _LOGGER.debug(f"Processing {len(sorted_data)} daily records for {self.customer_id}")
+            _LOGGER.info(f"Processing {len(sorted_data)} daily records for {self.customer_id}")
             
             prev_chi_so = None
             prev_ngay = None
@@ -641,94 +536,61 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
                 
                 # If not provided by API, calculate from meter readings
-                # EVN có thể đọc công tơ cách nhau vài ngày, nên cho phép tính bất kể khoảng cách
+                # Only calculate if prev_ngay is the previous day (not many days ago)
                 if dien_tieu_thu is None and prev_chi_so is not None and chi_so is not None:
+                    # Check if prev_ngay is the previous day
+                    can_calculate = False
                     if prev_ngay:
                         try:
                             from datetime import datetime
                             prev_date = datetime.strptime(prev_ngay, "%d-%m-%Y").date()
                             current_date = datetime.strptime(ngay, "%d-%m-%Y").date()
-                            days_diff = (current_date - prev_date).days
-                            
-                            if chi_so >= prev_chi_so:
-                                # Tính tổng tiêu thụ trong khoảng thời gian
-                                total_consumption = chi_so - prev_chi_so
-                                
-                                if days_diff == 1:
-                                    # Ngày liền trước, lưu trực tiếp
-                                    dien_tieu_thu = total_consumption
-                                elif days_diff > 1:
-                                    # Cách nhau nhiều ngày, chia trung bình
-                                    dien_tieu_thu = total_consumption / days_diff
-                                    _LOGGER.debug(
-                                        f"Tính tiêu thụ trung bình cho {ngay}: "
-                                        f"{total_consumption} kWh trong {days_diff} ngày = {dien_tieu_thu} kWh/ngày"
-                                    )
-                                else:
-                                    # days_diff <= 0, ngày trùng hoặc trước, không tính
-                                    _LOGGER.debug(
-                                        f"Ngày không hợp lệ: {ngay} không sau {prev_ngay}"
-                                    )
-                                    dien_tieu_thu = None
+                            # Only calculate if prev_date is exactly 1 day before current_date
+                            if (current_date - prev_date).days == 1:
+                                can_calculate = True
                             else:
-                                # Chỉ số giảm (có thể reset hoặc lỗi), không tính
                                 _LOGGER.debug(
-                                    f"Chỉ số giảm tại {ngay}: {chi_so} < {prev_chi_so}, "
-                                    f"bỏ qua tính tiêu thụ từ chỉ số"
+                                    f"Không tính tiêu thụ từ chỉ số cho {ngay}: "
+                                    f"ngày trước ({prev_ngay}) không phải ngày liền trước "
+                                    f"(cách {(current_date - prev_date).days} ngày)"
                                 )
-                                dien_tieu_thu = None
                         except Exception as e:
-                            _LOGGER.debug(f"Lỗi parse ngày để tính tiêu thụ: {e}")
-                            dien_tieu_thu = None
+                            _LOGGER.debug(f"Lỗi parse ngày để kiểm tra: {e}")
+                            # Fallback: allow calculation if dates are close (within 2 days)
+                            can_calculate = True
                     else:
                         # No previous day, cannot calculate
+                        can_calculate = False
+                    
+                    if can_calculate and chi_so >= prev_chi_so:
+                        dien_tieu_thu = chi_so - prev_chi_so
+                    elif chi_so < prev_chi_so:
+                        # Chỉ số giảm (có thể reset hoặc lỗi), không tính
+                        _LOGGER.debug(
+                            f"Chỉ số giảm tại {ngay}: {chi_so} < {prev_chi_so}, "
+                            f"bỏ qua tính tiêu thụ từ chỉ số"
+                        )
                         dien_tieu_thu = None
                 
 
-                # Chỉ lưu khi có ít nhất một giá trị > 0
-                should_save = False
-                if chi_so is not None and chi_so > 0:
-                    should_save = True
-                elif dien_tieu_thu is not None and dien_tieu_thu > 0:
-                    should_save = True
-                
-                if should_save:
-                    # Kiểm tra xem dữ liệu đã tồn tại và giống hệt chưa
-                    cursor.execute(
-                        "SELECT chi_so, dien_tieu_thu_kwh FROM daily_consumption WHERE userevn=? AND ngay=?",
-                        (self.customer_id, ngay)
-                    )
-                    existing_data = cursor.fetchone()
+                # Chỉ lưu khi có ít nhất một trong hai giá trị không phải NULL
+                if chi_so is not None or dien_tieu_thu is not None:
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO daily_consumption 
+                        (userevn, ngay, chi_so, dien_tieu_thu_kwh)
+                        VALUES (?, ?, ?, ?)
+                    """, (self.customer_id, ngay, chi_so, dien_tieu_thu))
                     
-                    # Chỉ lưu khi chưa có hoặc dữ liệu thay đổi
-                    should_save = False
-                    if not existing_data:
-                        should_save = True
-                    else:
-                        existing_chi_so, existing_dien_tieu_thu = existing_data
-                        if existing_chi_so != chi_so or existing_dien_tieu_thu != dien_tieu_thu:
-                            should_save = True
-                    
-                    if should_save:
-                        cursor.execute("""
-                            INSERT OR REPLACE INTO daily_consumption 
-                            (userevn, ngay, chi_so, dien_tieu_thu_kwh)
-                            VALUES (?, ?, ?, ?)
-                        """, (self.customer_id, ngay, chi_so, dien_tieu_thu))
-                        
-                        saved_count += 1
-                        prev_chi_so = chi_so
-                        prev_ngay = ngay
-                    else:
-                        skipped_count += 1
+                    saved_count += 1
+                    prev_chi_so = chi_so
+                    prev_ngay = ngay
                 else:
-                    _LOGGER.debug(f"Skipping record {ngay}: no valid data (chi_so={chi_so}, dien_tieu_thu={dien_tieu_thu})")
-                    skipped_count += 1
+                    _LOGGER.debug(f"Skipping record {ngay}: no data (chi_so={chi_so}, dien_tieu_thu={dien_tieu_thu})")
                     skipped_count += 1
 
             conn.commit()
             conn.close()
-            _LOGGER.debug(f"Saved {saved_count} daily records for {self.customer_id}, skipped {skipped_count}")
+            _LOGGER.info(f"Saved {saved_count} daily records for {self.customer_id}, skipped {skipped_count}")
             
             # DEBUG: Verify data was actually saved
             conn = sqlite3.connect(self.db_path)
@@ -738,7 +600,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 (self.customer_id,)
             )
             count = cursor.fetchone()[0]
-            _LOGGER.debug(f"After save, total records in DB for {self.customer_id}: {count}")
+            _LOGGER.info(f"DEBUG: After save, total records in DB for {self.customer_id}: {count}")
             conn.close()
 
         except Exception as e:
@@ -807,31 +669,19 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 # Chỉ lưu san_luong ở đây
 
             if san_luong is not None and san_luong > 0:
-                # Kiểm tra xem dữ liệu đã tồn tại và giống hệt chưa
-                cursor.execute(
-                    "SELECT san_luong_kwh FROM monthly_bill WHERE userevn=? AND thang=? AND nam=?",
-                    (self.customer_id, month, year)
-                )
-                existing_data = cursor.fetchone()
+                # INSERT OR REPLACE: tạo hoặc cập nhật hàng (giữ nguyên tien_dien nếu đã có)
+                # Sử dụng UPSERT pattern: INSERT nếu chưa có, UPDATE nếu đã có
+                cursor.execute("""
+                    INSERT INTO monthly_bill (userevn, thang, nam, tien_dien, san_luong_kwh)
+                    VALUES (?, ?, ?, NULL, ?)
+                    ON CONFLICT(userevn, thang, nam) 
+                    DO UPDATE SET san_luong_kwh = excluded.san_luong_kwh,
+                                  tien_dien = COALESCE(monthly_bill.tien_dien, excluded.tien_dien)
+                """, (self.customer_id, month, year, san_luong))
                 
-                # Chỉ lưu khi chưa có hoặc dữ liệu thay đổi
-                if not existing_data or existing_data[0] != san_luong:
-                    # INSERT OR REPLACE: tạo hoặc cập nhật hàng (giữ nguyên tien_dien nếu đã có)
-                    # Sử dụng UPSERT pattern: INSERT nếu chưa có, UPDATE nếu đã có
-                    cursor.execute("""
-                        INSERT INTO monthly_bill (userevn, thang, nam, tien_dien, san_luong_kwh)
-                        VALUES (?, ?, ?, NULL, ?)
-                        ON CONFLICT(userevn, thang, nam) 
-                        DO UPDATE SET san_luong_kwh = excluded.san_luong_kwh,
-                                      tien_dien = COALESCE(monthly_bill.tien_dien, excluded.tien_dien)
-                    """, (self.customer_id, month, year, san_luong))
-                    
-                    action = "updated" if existing_data else "inserted"
-                    _LOGGER.debug(f"{action.capitalize()} monthly data for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
-                else:
-                    _LOGGER.debug(f"Monthly data unchanged for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
+                _LOGGER.info(f"Saved monthly data for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
             else:
-                _LOGGER.debug(f"Invalid san_luong for {self.customer_id}, {month}/{year}: {san_luong}, skipping save")
+                _LOGGER.warning(f"Invalid san_luong for {self.customer_id}, {month}/{year}: {san_luong}")
 
             conn.commit()
             conn.close()
@@ -918,38 +768,17 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 tien_dien = self._parse_float(bill.get("TONG_TIEN"))
                 san_luong = self._parse_float(bill.get("DIEN_TTHU"))  # DIEN_TTHU = điện tiêu thụ
                 
-                # Chỉ lưu khi có ít nhất một giá trị > 0
-                should_save = False
-                if tien_dien is not None and tien_dien > 0:
-                    should_save = True
-                elif san_luong is not None and san_luong > 0:
-                    should_save = True
-                
-                if thang is not None and nam is not None and should_save:
-                    # Kiểm tra xem dữ liệu đã tồn tại và giống hệt chưa
-                    cursor.execute(
-                        "SELECT tien_dien, san_luong_kwh FROM monthly_bill WHERE userevn=? AND thang=? AND nam=?",
-                        (self.customer_id, thang, nam)
-                    )
-                    existing_data = cursor.fetchone()
-                    
-                    # Chỉ lưu khi chưa có hoặc dữ liệu thay đổi
-                    if not existing_data or existing_data[0] != tien_dien or existing_data[1] != san_luong:
-                        cursor.execute("""
-                            INSERT OR REPLACE INTO monthly_bill 
-                            (userevn, thang, nam, tien_dien, san_luong_kwh)
-                            VALUES (?, ?, ?, ?, ?)
-                        """, (self.customer_id, thang, nam, tien_dien, san_luong))
-                        action = "updated" if existing_data else "inserted"
-                        _LOGGER.debug(f"{action.capitalize()} hóa đơn: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
-                    else:
-                        _LOGGER.debug(f"Hóa đơn unchanged: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
-                else:
-                    _LOGGER.debug(f"Skipping bill: thang={thang}, nam={nam}, no valid data (tien={tien_dien}, sl={san_luong})")
+                if thang is not None and nam is not None:
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO monthly_bill 
+                        (userevn, thang, nam, tien_dien, san_luong_kwh)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (self.customer_id, thang, nam, tien_dien, san_luong))
+                    _LOGGER.debug(f"Saved hóa đơn: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
 
             conn.commit()
             conn.close()
-            _LOGGER.debug(f"Saved {len(data)} hóa đơn records to monthly_bill for {self.customer_id}")
+            _LOGGER.info(f"Saved {len(data)} hóa đơn records to monthly_bill for {self.customer_id}")
 
         except Exception as e:
             _LOGGER.error(f"Error saving hóa đơn to monthly_bill: {e}", exc_info=True)
@@ -1097,6 +926,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 if not date_str or date_str.lower() in ['null', 'none', '']:
                     continue
                 
+                _LOGGER.debug(f"Trying to parse date from field '{field}': '{date_str}'")
+                
                 # Handle THOI_DIEM format: "24/01/2026 00:33" -> extract date part
                 if field in ["THOI_DIEM", "thoi_diem"] and ' ' in date_str:
                     date_str = date_str.split(' ')[0]
@@ -1152,9 +983,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         except:
                             pass
                 except Exception as e:
+                    _LOGGER.debug(f"Error parsing date {date_str} from field {field}: {e}")
                     continue
         
         # Default to today
+        _LOGGER.debug(f"Could not parse date from record: {record}, using today")
         return datetime.now().strftime("%d-%m-%Y")
 
     def _parse_date_for_sort(self, record: Dict) -> datetime:
@@ -1191,9 +1024,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     elif len(date_str) == 8 and date_str.isdigit():
                         return datetime.strptime(date_str, "%Y%m%d")
                 except Exception as e:
+                    _LOGGER.debug(f"Error parsing date for sort from field {field}: {e}")
                     continue
         
         # Default to today if parsing fails
+        _LOGGER.debug(f"Could not parse date for sort from record: {record}, using today")
         return datetime.now()
 
     def _parse_float(self, value: Any) -> Optional[float]:
