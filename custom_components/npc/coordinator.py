@@ -84,62 +84,74 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             # 5. Fetch monthly history data (History from 2016 to now) - ƯU TIÊN THỨ HAI
             # Dữ liệu chisothang từ API cũng chính xác, ưu tiên trước daily data
+            # Chỉ lấy các tháng chưa có trong database
             _LOGGER.info(f"Syncing monthly history for {self.customer_id}")
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
-            
-            _LOGGER.info(f"Found {len(missing_periods)} missing monthly periods for {self.customer_id}")
 
-            for month, year in missing_periods:
-                _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
-                m_data = await self.api.get_chisothang(month, year)
-                if m_data and m_data.get("data"):
-                    await self._save_monthly_data(m_data["data"], month, year)
-                    _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
-                else:
-                    _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
+            if len(missing_periods) > 0:
+                _LOGGER.info(f"Found {len(missing_periods)} missing monthly periods for {self.customer_id}")
+
+                for month, year in missing_periods:
+                    _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
+                    m_data = await self.api.get_chisothang(month, year)
+                    if m_data and m_data.get("data"):
+                        await self._save_monthly_data(m_data["data"], month, year)
+                        _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
+                    else:
+                        _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
+            else:
+                _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
 
             # 6. Fetch daily data in batches of 90 days (có thể lấy cả năm trong app).
             # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
-            # Chỉ lấy từ 01/01/2025 đến hiện tại
+            # Chỉ lấy những ngày chưa có trong database
             start_date_daily = datetime(2025, 1, 1)
             batch_days = 90
 
             # Tạm thời disable cleanup retention để tránh mất dữ liệu
             # await self.hass.async_add_executor_job(self._cleanup_history_retention)
 
-            all_daily_data = []
-            current_start = start_date_daily
-            batch_count = 0
-            failed_batches = 0
+            # Check missing daily periods
+            missing_daily_periods = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
 
-            _LOGGER.info(f"Starting daily data sync from {start_date_daily.strftime('%d/%m/%Y')} to {today.strftime('%d/%m/%Y')}")
+            if len(missing_daily_periods) > 0:
+                _LOGGER.info(f"Found {len(missing_daily_periods)} missing daily periods for {self.customer_id}")
 
-            while current_start < today:
-                current_end = min(current_start + timedelta(days=batch_days - 1), today)
-                from_date_str = current_start.strftime("%d/%m/%Y")
-                to_date_str = current_end.strftime("%d/%m/%Y")
-                batch_count += 1
+                # Group missing dates into batches
+                missing_dates = sorted(missing_daily_periods)
+                all_daily_data = []
+                batch_count = 0
+                failed_batches = 0
 
-                _LOGGER.debug(f"Fetching daily data batch {batch_count}: {from_date_str} to {to_date_str}")
-                daily_data = await self.api.get_chisongay(from_date_str, to_date_str)
+                for i in range(0, len(missing_dates), batch_days):
+                    batch_dates = missing_dates[i:i + batch_days]
+                    if not batch_dates:
+                        continue
 
-                if daily_data and daily_data.get("data"):
-                    batch_records = len(daily_data["data"])
-                    all_daily_data.extend(daily_data["data"])
-                    _LOGGER.debug(f"Batch {batch_count}: Received {batch_records} daily records")
+                    from_date = datetime.strptime(batch_dates[0], "%d-%m-%Y").strftime("%d/%m/%Y")
+                    to_date = datetime.strptime(batch_dates[-1], "%d-%m-%Y").strftime("%d/%m/%Y")
+                    batch_count += 1
+
+                    _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(batch_dates)} dates)")
+                    daily_data = await self.api.get_chisongay(from_date, to_date)
+
+                    if daily_data and daily_data.get("data"):
+                        batch_records = len(daily_data["data"])
+                        all_daily_data.extend(daily_data["data"])
+                        _LOGGER.debug(f"Batch {batch_count}: Received {batch_records} daily records")
+                    else:
+                        failed_batches += 1
+                        _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
+
+                if all_daily_data:
+                    _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
+                    await self._save_daily_data(all_daily_data)
                 else:
-                    failed_batches += 1
-                    _LOGGER.debug(f"Batch {batch_count}: No data received for {from_date_str} to {to_date_str}")
-
-                current_start = current_end + timedelta(days=1)
-
-            if all_daily_data:
-                _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
-                await self._save_daily_data(all_daily_data)
+                    _LOGGER.warning(f"No daily data collected for {self.customer_id}, failed batches: {failed_batches}")
             else:
-                _LOGGER.warning(f"No daily data collected for {self.customer_id}, failed batches: {failed_batches}")
+                _LOGGER.info(f"No missing daily periods found for {self.customer_id}, skipping API calls")
 
             # 7. Power outage was synchronized at the start of this update cycle.
 
