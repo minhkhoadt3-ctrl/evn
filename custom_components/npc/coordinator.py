@@ -154,9 +154,30 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # Tạm thời disable cleanup retention để tránh mất dữ liệu
             # await self.hass.async_add_executor_job(self._cleanup_history_retention)
 
-            # Check missing daily periods
-            missing_daily_periods = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
-
+            # LUÔN sync lại 5 ngày gần nhất (hôm nay + 4 ngày trước) để update dữ liệu mới nhất
+            # EVN có thể cập nhật lại dữ liệu vài ngày gần nhất
+            today = datetime.now()
+            force_sync_dates = []
+            for i in range(5):  # Hôm nay + 4 ngày trước
+                date_to_sync = today - timedelta(days=i)
+                date_str = date_to_sync.strftime("%d-%m-%Y")
+                force_sync_dates.append(date_str)
+            
+            # Chỉ dùng missing periods cho lần sync đầu tiên (không có dữ liệu nào)
+            # Kiểm tra xem database có dữ liệu daily consumption không
+            has_daily_data = await self.hass.async_add_executor_job(self._check_has_daily_data)
+            
+            if not has_daily_data:
+                # Lần sync đầu tiên: lấy missing periods trong 10 ngày
+                missing_daily_periods = await self.hass.async_add_executor_job(self._get_missing_daily_periods)
+                # Thêm force_sync_dates vào
+                for date_str in force_sync_dates:
+                    if date_str not in missing_daily_periods:
+                        missing_daily_periods.append(date_str)
+            else:
+                # Sync thường: chỉ sync 5 ngày gần nhất
+                missing_daily_periods = force_sync_dates
+            
             if len(missing_daily_periods) > 0:
                 _LOGGER.info(f"Found {len(missing_daily_periods)} missing daily periods for {self.customer_id}")
                 # Log first 10 missing dates for debugging
@@ -262,14 +283,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         """)
         
         # Xóa các record rỗng trong daily_consumption (không có chi_so và dien_tieu_thu_kwh)
+        # CHỈ xóa cho user hiện tại, không ảnh hưởng user khác
         cursor.execute("""
             DELETE FROM daily_consumption 
-            WHERE (chi_so IS NULL OR chi_so = 0) 
+            WHERE userevn = ? 
+            AND (chi_so IS NULL OR chi_so = 0) 
             AND (dien_tieu_thu_kwh IS NULL OR dien_tieu_thu_kwh = 0)
-        """)
+        """, (self.customer_id,))
         deleted_count = cursor.rowcount
         if deleted_count > 0:
-            _LOGGER.debug(f"Cleaned up {deleted_count} empty records from daily_consumption")
+            _LOGGER.debug(f"Cleaned up {deleted_count} empty records from daily_consumption for {self.customer_id}")
         
         conn.commit()
         conn.close()
@@ -384,12 +407,15 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         return missing
 
     def _get_missing_daily_periods(self):
-        """Identify missing daily periods only from 2025 to now.
+        """Identify missing daily periods only within 10 days from now.
         Tìm ngày gần nhất có dữ liệu và lấy từ ngày tiếp theo để tránh lấy trùng.
-        Nếu có ngày 1,2,5,6 thì ngày gần nhất là ngày 6, sẽ lấy từ ngày 7.
+        Bỏ qua các ngày cũ hơn 10 ngày so với hiện tại.
         """
         missing = []
         today = datetime.now()
+        
+        # Chỉ sync trong 10 ngày gần nhất
+        cutoff_date = today - timedelta(days=10)
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -413,6 +439,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug(f"Database path = {self.db_path}")
         _LOGGER.debug(f"Latest ANY date in database for {self.customer_id}: {latest_any_date_str}")
         _LOGGER.debug(f"Latest valid date in database for {self.customer_id}: {latest_date_str}")
+        _LOGGER.debug(f"Syncing daily data from {cutoff_date.strftime('%d/%m/%Y')} to {today.strftime('%d/%m/%Y')} (10 days window)")
         
         # Debug: Count total records and records with actual data
         cursor.execute(
@@ -430,15 +457,21 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         if total_count != data_count:
             _LOGGER.debug(f"Total records for {self.customer_id}: {total_count}, records with data: {data_count}")
 
-        # Nếu không có dữ liệu thực sự hoặc dữ liệu quá cũ (trước 2025), bắt đầu từ 01/01/2025
+        # Bắt đầu từ cutoff_date (10 ngày trước hôm nay)
+        first_date = cutoff_date
+        
+        # Nếu không có dữ liệu thực sự hoặc dữ liệu quá cũ (trước cutoff_date), bắt đầu từ cutoff_date
         if not latest_date_str:
-            first_date = datetime(2025, 1, 1)
             _LOGGER.debug(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
         else:
-            # Có dữ liệu, bắt đầu từ ngày tiếp theo của ngày gần nhất
+            # Có dữ liệu, bắt đầu từ max(latest_date + 1, cutoff_date)
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
-            first_date = latest_date + timedelta(days=1)
-            _LOGGER.debug(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
+            if latest_date < cutoff_date:
+                first_date = cutoff_date
+                _LOGGER.debug(f"Latest data is too old, starting from cutoff date {first_date.strftime('%d/%m/%Y')}")
+            else:
+                first_date = latest_date + timedelta(days=1)
+                _LOGGER.debug(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
 
         current_date = today
 
@@ -458,8 +491,22 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             date_cursor += timedelta(days=1)
 
         conn.close()
-        _LOGGER.debug(f"Found {len(missing)} missing daily periods for {self.customer_id}")
+        _LOGGER.debug(f"Found {len(missing)} missing daily periods for {self.customer_id} (within 10 days)")
         return missing
+
+    def _check_has_daily_data(self):
+        """Check if database has any daily consumption data for this user."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT COUNT(*) FROM daily_consumption WHERE userevn = ?",
+            (self.customer_id,)
+        )
+        count = cursor.fetchone()[0]
+        
+        conn.close()
+        return count > 0
 
     def _get_missing_bill_months(self):
         """Identify months that are missing bill data (tien_dien)."""
@@ -594,40 +641,47 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
                 
                 # If not provided by API, calculate from meter readings
-                # Only calculate if prev_ngay is the previous day (not many days ago)
+                # EVN có thể đọc công tơ cách nhau vài ngày, nên cho phép tính bất kể khoảng cách
                 if dien_tieu_thu is None and prev_chi_so is not None and chi_so is not None:
-                    # Check if prev_ngay is the previous day
-                    can_calculate = False
                     if prev_ngay:
                         try:
                             from datetime import datetime
                             prev_date = datetime.strptime(prev_ngay, "%d-%m-%Y").date()
                             current_date = datetime.strptime(ngay, "%d-%m-%Y").date()
-                            # Only calculate if prev_date is exactly 1 day before current_date
-                            if (current_date - prev_date).days == 1:
-                                can_calculate = True
+                            days_diff = (current_date - prev_date).days
+                            
+                            if chi_so >= prev_chi_so:
+                                # Tính tổng tiêu thụ trong khoảng thời gian
+                                total_consumption = chi_so - prev_chi_so
+                                
+                                if days_diff == 1:
+                                    # Ngày liền trước, lưu trực tiếp
+                                    dien_tieu_thu = total_consumption
+                                elif days_diff > 1:
+                                    # Cách nhau nhiều ngày, chia trung bình
+                                    dien_tieu_thu = total_consumption / days_diff
+                                    _LOGGER.debug(
+                                        f"Tính tiêu thụ trung bình cho {ngay}: "
+                                        f"{total_consumption} kWh trong {days_diff} ngày = {dien_tieu_thu} kWh/ngày"
+                                    )
+                                else:
+                                    # days_diff <= 0, ngày trùng hoặc trước, không tính
+                                    _LOGGER.debug(
+                                        f"Ngày không hợp lệ: {ngay} không sau {prev_ngay}"
+                                    )
+                                    dien_tieu_thu = None
                             else:
+                                # Chỉ số giảm (có thể reset hoặc lỗi), không tính
                                 _LOGGER.debug(
-                                    f"Không tính tiêu thụ từ chỉ số cho {ngay}: "
-                                    f"ngày trước ({prev_ngay}) không phải ngày liền trước "
-                                    f"(cách {(current_date - prev_date).days} ngày)"
+                                    f"Chỉ số giảm tại {ngay}: {chi_so} < {prev_chi_so}, "
+                                    f"bỏ qua tính tiêu thụ từ chỉ số"
                                 )
+                                dien_tieu_thu = None
                         except Exception as e:
-                            _LOGGER.debug(f"Lỗi parse ngày để kiểm tra: {e}")
-                            # Fallback: allow calculation if dates are close (within 2 days)
-                            can_calculate = True
+                            _LOGGER.debug(f"Lỗi parse ngày để tính tiêu thụ: {e}")
+                            dien_tieu_thu = None
                     else:
                         # No previous day, cannot calculate
-                        can_calculate = False
-                    
-                    if can_calculate and chi_so >= prev_chi_so:
-                        dien_tieu_thu = chi_so - prev_chi_so
-                    elif chi_so < prev_chi_so:
-                        # Chỉ số giảm (có thể reset hoặc lỗi), không tính
-                        _LOGGER.debug(
-                            f"Chỉ số giảm tại {ngay}: {chi_so} < {prev_chi_so}, "
-                            f"bỏ qua tính tiêu thụ từ chỉ số"
-                        )
                         dien_tieu_thu = None
                 
 
