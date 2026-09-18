@@ -431,46 +431,20 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             return format_kwh(san_luong)
         # Tiêu thụ kỳ trước nữa
         if self._sensor_type == "tieu_thu_ky_truoc_nua":
-            # Tính tháng kỳ trước nữa (2 kỳ trước)
-            if self._ngaydauky == 1:
-                # Kỳ theo tháng dương: kỳ trước nữa = 2 tháng trước
-                if today.month > 2:
-                    thang = today.month - 2
-                    nam = today.year
-                elif today.month == 2:
-                    thang = 12
-                    nam = today.year - 1
-                else:  # today.month == 1
-                    thang = 11
-                    nam = today.year - 1
-            else:
-                # Kỳ theo ngày cắt: cần xác định đang ở kỳ nào
-                if today.day < self._ngaydauky:
-                    # Đang ở kỳ hiện tại, kỳ trước nữa = 2 kỳ trước
-                    if today.month > 2:
-                        thang = today.month - 2
-                        nam = today.year
-                    elif today.month == 2:
-                        thang = 12
-                        nam = today.year - 1
-                    else:  # today.month == 1
-                        thang = 11
-                        nam = today.year - 1
-                else:
-                    # Đang ở kỳ sau, kỳ trước nữa = 1 kỳ trước
-                    if today.month > 1:
-                        thang = today.month - 1
-                        nam = today.year
-                    else:  # today.month == 1
-                        thang = 12
-                        nam = today.year - 1
+            # Tính kỳ trước nữa dựa trên ngaydauky
+            start_current, _, end_current, prev_end_ky = tinhngaydauky(self._ngaydauky, today)
             
-            _, san_luong = laydientieuthuthang(self._userevn, thang, nam)
-            self._attributes = {
-                "Tháng": f"{thang:02d}",
-                "Năm": str(nam),
-                "Ngày đầu kỳ": str(self._ngaydauky)
-            }
+            # Tính kỳ trước: từ prev_start_ky đến prev_end_ky
+            prev_start_ky, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky)
+            
+            # Tính kỳ trước nữa: từ prev_start_ky_prev đến prev_end_ky_prev
+            # prev_end_ky_prev = prev_start_ky - 1 ngày
+            prev_end_ky_prev = prev_start_ky - timedelta(days=1)
+            prev_start_ky_prev, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky_prev)
+            
+            # Lấy chỉ số đầu và cuối kỳ trước nữa
+            chi_so_dau_prev_prev = laychisongay(self._userevn, prev_start_ky_prev.strftime("%Y-%m-%d"))
+            if chi_so_dau_prev_prev is None or chi_so_dau_prev_prev <= 0:
                 chi_so_dau_prev_prev, ngay_dau_prev_prev = laychisongaygannhat(
                     self._userevn,
                     prev_start_ky_prev.strftime("%Y-%m-%d"),
