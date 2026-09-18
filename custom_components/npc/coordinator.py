@@ -104,11 +104,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             else:
                 _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
 
-            # 6. Fetch daily data in batches of 10 days.
+            # 6. Fetch daily data in batches of 90 days.
             # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
             # Chỉ lấy những ngày chưa có trong database
             start_date_daily = datetime(2025, 1, 1)
-            batch_days = 10
+            batch_days = 90
 
             # Tạm thời disable cleanup retention để tránh mất dữ liệu
             # await self.hass.async_add_executor_job(self._cleanup_history_retention)
@@ -130,8 +130,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     if not batch_dates:
                         continue
 
-                    from_date = datetime.strptime(batch_dates[0], "%d-%m-%Y").strftime("%d/%m/%Y")
-                    to_date = datetime.strptime(batch_dates[-1], "%d-%m-%Y").strftime("%d/%m/%Y")
+                    # Parse dates correctly from dd-mm-yyyy to dd/mm/yyyy
+                    from_date_obj = datetime.strptime(batch_dates[0], "%d-%m-%Y")
+                    to_date_obj = datetime.strptime(batch_dates[-1], "%d-%m-%Y")
+                    from_date = from_date_obj.strftime("%d/%m/%Y")
+                    to_date = to_date_obj.strftime("%d/%m/%Y")
                     batch_count += 1
 
                     _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(batch_dates)} dates)")
