@@ -232,8 +232,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         # Xóa các record rỗng trong daily_consumption (không có chi_so và dien_tieu_thu_kwh)
         cursor.execute("""
             DELETE FROM daily_consumption 
-            WHERE chi_so IS NULL AND dien_tieu_thu_kwh IS NULL
-        """)
+            WHERE userevn = ? AND chi_so IS NULL AND dien_tieu_thu_kwh IS NULL
+        """, (self.customer_id,))
         deleted_count = cursor.rowcount
         if deleted_count > 0:
             _LOGGER.info(f"Cleaned up {deleted_count} empty records from daily_consumption")
@@ -349,9 +349,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         return missing
 
     def _get_missing_daily_periods(self):
-        """Identify missing daily periods only from 2025 to now.
-        Tìm ngày gần nhất có dữ liệu và lấy từ ngày tiếp theo để tránh lấy trùng.
-        Nếu có ngày 1,2,5,6 thì ngày gần nhất là ngày 6, sẽ lấy từ ngày 7.
+        """Identify missing daily periods only in the last 10 days from the latest database entry.
+        Chỉ tìm thiếu trong 10 ngày gần nhất tính từ ngày cuối cùng đã lưu trong database.
         """
         missing = []
         today = datetime.now()
@@ -367,38 +366,27 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         result = cursor.fetchone()
         latest_date_str = result[0] if result and result[0] else None
         
-        _LOGGER.info(f"DEBUG: Database path = {self.db_path}")
         _LOGGER.info(f"DEBUG: Latest date in database for {self.customer_id}: {latest_date_str}")
-        
-        # Debug: Count total records and records with actual data
-        cursor.execute(
-            "SELECT COUNT(*) FROM daily_consumption WHERE userevn = ?",
-            (self.customer_id,)
-        )
-        total_count = cursor.fetchone()[0]
-        
-        cursor.execute(
-            "SELECT COUNT(*) FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL)",
-            (self.customer_id,)
-        )
-        data_count = cursor.fetchone()[0]
-        
-        _LOGGER.info(f"DEBUG: Total records for {self.customer_id}: {total_count}, records with data: {data_count}")
 
         if not latest_date_str:
-            # Không có dữ liệu nào, bắt đầu từ 01/01/2025
-            first_date = datetime(2025, 1, 1)
-            _LOGGER.info(f"No existing daily data found, starting from {first_date.strftime('%d/%m/%Y')}")
+            # Không có dữ liệu nào, bắt đầu từ 10 ngày trước đến hôm nay
+            days_to_check = 10
+            start_date = today - timedelta(days=days_to_check)
+            _LOGGER.info(f"No existing daily data found, checking last {days_to_check} days from {start_date.strftime('%d/%m/%Y')}")
         else:
             # Có dữ liệu, bắt đầu từ ngày tiếp theo của ngày gần nhất
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
-            first_date = latest_date + timedelta(days=1)
-            _LOGGER.info(f"Starting daily data sync from {first_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
+            start_date = latest_date + timedelta(days=1)
+            _LOGGER.info(f"Checking daily data from {start_date.strftime('%d/%m/%Y')} (after latest data {latest_date_str})")
 
-        current_date = today
+        # Chỉ kiểm tra tối đa 10 ngày từ start_date hoặc đến ngày hiện tại
+        days_to_check = 10
+        end_date = min(start_date + timedelta(days=days_to_check - 1), today)
+        
+        _LOGGER.info(f"Checking for missing daily data: {start_date.strftime('%d/%m/%Y')} -> {end_date.strftime('%d/%m/%Y')} (max {days_to_check} days)")
 
-        date_cursor = first_date
-        while date_cursor <= current_date:
+        date_cursor = start_date
+        while date_cursor <= end_date:
             ngay = date_cursor.strftime("%d-%m-%Y")
 
             cursor.execute(
@@ -575,10 +563,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
                 # Chỉ lưu khi có ít nhất một trong hai giá trị không phải NULL
                 if chi_so is not None or dien_tieu_thu is not None:
+                    # Sử dụng UPSERT: INSERT nếu chưa có, UPDATE chỉ các field cần thiết nếu đã có
                     cursor.execute("""
-                        INSERT OR REPLACE INTO daily_consumption 
-                        (userevn, ngay, chi_so, dien_tieu_thu_kwh)
+                        INSERT INTO daily_consumption (userevn, ngay, chi_so, dien_tieu_thu_kwh)
                         VALUES (?, ?, ?, ?)
+                        ON CONFLICT(userevn, ngay) 
+                        DO UPDATE SET chi_so = COALESCE(excluded.chi_so, daily_consumption.chi_so),
+                                      dien_tieu_thu_kwh = COALESCE(excluded.dien_tieu_thu_kwh, daily_consumption.dien_tieu_thu_kwh)
                     """, (self.customer_id, ngay, chi_so, dien_tieu_thu))
                     
                     saved_count += 1
