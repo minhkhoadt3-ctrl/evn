@@ -137,7 +137,14 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     to_date = to_date_obj.strftime("%d/%m/%Y")
                     batch_count += 1
 
-                    _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(batch_dates)} dates)")
+                    # Calculate actual day span to avoid requesting too large ranges
+                    day_span = (to_date_obj - from_date_obj).days
+                    if day_span > 90:
+                        _LOGGER.warning(f"Batch {batch_count} has {day_span} days span (>90), limiting to 90 days")
+                        to_date_obj = from_date_obj + timedelta(days=90)
+                        to_date = to_date_obj.strftime("%d/%m/%Y")
+
+                    _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(batch_dates)} dates, {day_span} days span)")
                     daily_data = await self.api.get_chisongay(from_date, to_date)
 
                     if daily_data and daily_data.get("data"):
