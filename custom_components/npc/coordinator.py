@@ -576,17 +576,37 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
                 # Chỉ lưu khi có ít nhất một trong hai giá trị không phải NULL
                 if chi_so is not None or dien_tieu_thu is not None:
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO daily_consumption 
-                        (userevn, ngay, chi_so, dien_tieu_thu_kwh)
-                        VALUES (?, ?, ?, ?)
-                    """, (self.customer_id, ngay, chi_so, dien_tieu_thu))
+                    # Kiểm tra xem dữ liệu đã tồn tại và giống hệt chưa
+                    cursor.execute(
+                        "SELECT chi_so, dien_tieu_thu_kwh FROM daily_consumption WHERE userevn=? AND ngay=?",
+                        (self.customer_id, ngay)
+                    )
+                    existing_data = cursor.fetchone()
                     
-                    saved_count += 1
-                    prev_chi_so = chi_so
-                    prev_ngay = ngay
+                    # Chỉ lưu khi chưa có hoặc dữ liệu thay đổi
+                    should_save = False
+                    if not existing_data:
+                        should_save = True
+                    else:
+                        existing_chi_so, existing_dien_tieu_thu = existing_data
+                        if existing_chi_so != chi_so or existing_dien_tieu_thu != dien_tieu_thu:
+                            should_save = True
+                    
+                    if should_save:
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO daily_consumption 
+                            (userevn, ngay, chi_so, dien_tieu_thu_kwh)
+                            VALUES (?, ?, ?, ?)
+                        """, (self.customer_id, ngay, chi_so, dien_tieu_thu))
+                        
+                        saved_count += 1
+                        prev_chi_so = chi_so
+                        prev_ngay = ngay
+                    else:
+                        skipped_count += 1
                 else:
                     _LOGGER.debug(f"Skipping record {ngay}: no data (chi_so={chi_so}, dien_tieu_thu={dien_tieu_thu})")
+                    skipped_count += 1
                     skipped_count += 1
 
             conn.commit()
@@ -670,17 +690,29 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 # Chỉ lưu san_luong ở đây
 
             if san_luong is not None and san_luong > 0:
-                # INSERT OR REPLACE: tạo hoặc cập nhật hàng (giữ nguyên tien_dien nếu đã có)
-                # Sử dụng UPSERT pattern: INSERT nếu chưa có, UPDATE nếu đã có
-                cursor.execute("""
-                    INSERT INTO monthly_bill (userevn, thang, nam, tien_dien, san_luong_kwh)
-                    VALUES (?, ?, ?, NULL, ?)
-                    ON CONFLICT(userevn, thang, nam) 
-                    DO UPDATE SET san_luong_kwh = excluded.san_luong_kwh,
-                                  tien_dien = COALESCE(monthly_bill.tien_dien, excluded.tien_dien)
-                """, (self.customer_id, month, year, san_luong))
+                # Kiểm tra xem dữ liệu đã tồn tại và giống hệt chưa
+                cursor.execute(
+                    "SELECT san_luong_kwh FROM monthly_bill WHERE userevn=? AND thang=? AND nam=?",
+                    (self.customer_id, month, year)
+                )
+                existing_data = cursor.fetchone()
                 
-                _LOGGER.debug(f"Saved monthly data for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
+                # Chỉ lưu khi chưa có hoặc dữ liệu thay đổi
+                if not existing_data or existing_data[0] != san_luong:
+                    # INSERT OR REPLACE: tạo hoặc cập nhật hàng (giữ nguyên tien_dien nếu đã có)
+                    # Sử dụng UPSERT pattern: INSERT nếu chưa có, UPDATE nếu đã có
+                    cursor.execute("""
+                        INSERT INTO monthly_bill (userevn, thang, nam, tien_dien, san_luong_kwh)
+                        VALUES (?, ?, ?, NULL, ?)
+                        ON CONFLICT(userevn, thang, nam) 
+                        DO UPDATE SET san_luong_kwh = excluded.san_luong_kwh,
+                                      tien_dien = COALESCE(monthly_bill.tien_dien, excluded.tien_dien)
+                    """, (self.customer_id, month, year, san_luong))
+                    
+                    action = "updated" if existing_data else "inserted"
+                    _LOGGER.debug(f"{action.capitalize()} monthly data for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
+                else:
+                    _LOGGER.debug(f"Monthly data unchanged for {self.customer_id}, {month}/{year}: san_luong={san_luong}")
             else:
                 _LOGGER.debug(f"Invalid san_luong for {self.customer_id}, {month}/{year}: {san_luong}")
 
@@ -770,12 +802,24 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 san_luong = self._parse_float(bill.get("DIEN_TTHU"))  # DIEN_TTHU = điện tiêu thụ
                 
                 if thang is not None and nam is not None:
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO monthly_bill 
-                        (userevn, thang, nam, tien_dien, san_luong_kwh)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (self.customer_id, thang, nam, tien_dien, san_luong))
-                    _LOGGER.debug(f"Saved hóa đơn: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
+                    # Kiểm tra xem dữ liệu đã tồn tại và giống hệt chưa
+                    cursor.execute(
+                        "SELECT tien_dien, san_luong_kwh FROM monthly_bill WHERE userevn=? AND thang=? AND nam=?",
+                        (self.customer_id, thang, nam)
+                    )
+                    existing_data = cursor.fetchone()
+                    
+                    # Chỉ lưu khi chưa có hoặc dữ liệu thay đổi
+                    if not existing_data or existing_data[0] != tien_dien or existing_data[1] != san_luong:
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO monthly_bill 
+                            (userevn, thang, nam, tien_dien, san_luong_kwh)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (self.customer_id, thang, nam, tien_dien, san_luong))
+                        action = "updated" if existing_data else "inserted"
+                        _LOGGER.debug(f"{action.capitalize()} hóa đơn: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
+                    else:
+                        _LOGGER.debug(f"Hóa đơn unchanged: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
 
             conn.commit()
             conn.close()
