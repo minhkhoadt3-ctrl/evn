@@ -264,7 +264,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         # Xóa các record rỗng trong daily_consumption (không có chi_so và dien_tieu_thu_kwh)
         cursor.execute("""
             DELETE FROM daily_consumption 
-            WHERE chi_so IS NULL AND dien_tieu_thu_kwh IS NULL
+            WHERE (chi_so IS NULL OR chi_so = 0) 
+            AND (dien_tieu_thu_kwh IS NULL OR dien_tieu_thu_kwh = 0)
         """)
         deleted_count = cursor.rowcount
         if deleted_count > 0:
@@ -539,6 +540,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     PRIMARY KEY (userevn, ngay)
                 )
             """)
+            
+            # Cleanup: Xóa record rỗng trước khi sync mới
+            cursor.execute("""
+                DELETE FROM daily_consumption 
+                WHERE userevn = ? AND (chi_so IS NULL OR chi_so = 0) 
+                AND (dien_tieu_thu_kwh IS NULL OR dien_tieu_thu_kwh = 0)
+            """, (self.customer_id,))
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                _LOGGER.debug(f"Cleaned up {deleted_count} empty records from daily_consumption for {self.customer_id}")
 
             # API returns data from newest to oldest (index 0 is newest)
             # But we need to process from oldest to newest to calculate daily consumption
