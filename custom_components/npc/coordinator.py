@@ -73,19 +73,37 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     exc_info=True,
                 )
 
-            # 4. Fetch bill data (hóa đơn) - ƯU TIÊN ĐẦU TIÊN
+            # 4. Fetch monthly history data (History from 2016 to now) - ƯU TIÊN ĐẦU TIÊN
+            # Dữ liệu chisothang từ API cũng chính xác, ưu tiên trước daily data
+            # Chỉ lấy các tháng chưa có trong database
+            _LOGGER.info(f"Syncing monthly history for {self.customer_id}")
+
+            # Use executor to check missing data
+            missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
+
+            if len(missing_periods) > 0:
+                _LOGGER.info(f"Found {len(missing_periods)} missing monthly periods for {self.customer_id}")
+
+                for month, year in missing_periods:
+                    _LOGGER.info(f"Fetching missing monthly data for {month}/{year}")
+                    m_data = await self.api.get_chisothang(month, year)
+                    if m_data and m_data.get("data"):
+                        await self._save_monthly_data(m_data["data"], month, year)
+                        _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
+                    else:
+                        _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
+            else:
+                _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
+
+            # 5. Fetch bill data (hóa đơn) - ƯU TIÊN THỨ HAI
             # Dữ liệu hóa đơn từ API là chính xác nhất, ưu tiên trước daily data
+            # Chạy sau monthly history để không làm ảnh hưởng việc sync lịch sử
             bill_data = await self.api.get_hoadon()
             if bill_data and bill_data.get("data"):
                 _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
                 await self._save_bill_data(bill_data["data"])
                 await self._save_hoadon_to_monthly_bill(bill_data["data"])
                 _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
-
-            # 5. Fetch monthly history data (History from 2016 to now) - ƯU TIÊN THỨ HAI
-            # Dữ liệu chisothang từ API cũng chính xác, ưu tiên trước daily data
-            # Chỉ lấy các tháng chưa có trong database
-            _LOGGER.info(f"Syncing monthly history for {self.customer_id}")
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
