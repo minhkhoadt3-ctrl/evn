@@ -104,11 +104,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             else:
                 _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
 
-            # 6. Fetch daily data in batches of 90 days.
+            # 6. Fetch daily data by month (từng tháng một) để tránh lỗi date calculation
             # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
             # Chỉ lấy những ngày chưa có trong database
-            start_date_daily = datetime(2025, 1, 1)
-            batch_days = 90
 
             # Tạm thời disable cleanup retention để tránh mất dữ liệu
             # await self.hass.async_add_executor_job(self._cleanup_history_retention)
@@ -119,52 +117,42 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             if len(missing_daily_periods) > 0:
                 _LOGGER.info(f"Found {len(missing_daily_periods)} missing daily periods for {self.customer_id}")
 
-                # Group missing dates into batches
-                missing_dates = sorted(missing_daily_periods)
+                # Group missing dates by month (từng tháng một)
+                from collections import defaultdict
+                missing_by_month = defaultdict(list)
+                
+                for date_str in missing_daily_periods:
+                    try:
+                        date_obj = datetime.strptime(date_str, "%d-%m-%Y")
+                        month_key = (date_obj.year, date_obj.month)
+                        missing_by_month[month_key].append(date_str)
+                    except:
+                        continue
+                
                 all_daily_data = []
                 batch_count = 0
                 failed_batches = 0
-
-                for i in range(0, len(missing_dates), batch_days):
-                    batch_dates = missing_dates[i:i + batch_days]
-                    if not batch_dates:
+                
+                # Sort by month to process chronologically
+                for (year, month), dates in sorted(missing_by_month.items()):
+                    if not dates:
                         continue
-
-                    # Parse dates correctly from dd-mm-yyyy to dd/mm/yyyy
-                    from_date_obj = datetime.strptime(batch_dates[0], "%d-%m-%Y")
-                    to_date_obj = datetime.strptime(batch_dates[-1], "%d-%m-%Y")
-                    from_date = from_date_obj.strftime("%d/%m/%Y")
-                    to_date = to_date_obj.strftime("%d/%m/%Y")
+                    
                     batch_count += 1
-
-                    # Calculate actual day span to avoid requesting too large ranges
-                    day_span = (to_date_obj - from_date_obj).days
-                    if day_span > 90:
-                        _LOGGER.warning(f"Batch {batch_count} has {day_span} days span (>90), limiting to 90 days")
-                        to_date_obj = from_date_obj + timedelta(days=90)
-                        to_date = to_date_obj.strftime("%d/%m/%Y")
-
-                    _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(batch_dates)} dates, {day_span} days span)")
+                    
+                    # Get first and last day of the month
+                    from calendar import monthrange
+                    _, last_day = monthrange(year, month)
+                    from_date = f"01/{month:02d}/{year}"
+                    to_date = f"{last_day:02d}/{month:02d}/{year}"
+                    
+                    _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
                     daily_data = await self.api.get_chisongay(from_date, to_date)
 
                     if daily_data and daily_data.get("data"):
                         batch_records = len(daily_data["data"])
-                        
-                        # Filter API response to only include records within requested date range
-                        # API often returns entire history instead of just the requested range
-                        filtered_records = []
-                        for record in daily_data["data"]:
-                            record_date = self._parse_date(record)
-                            if record_date:
-                                try:
-                                    record_date_obj = datetime.strptime(record_date, "%d-%m-%Y")
-                                    if from_date_obj <= record_date_obj <= to_date_obj:
-                                        filtered_records.append(record)
-                                except:
-                                    pass
-                        
-                        _LOGGER.info(f"Batch {batch_count}: API returned {batch_records} records, filtered to {len(filtered_records)} within range")
-                        all_daily_data.extend(filtered_records)
+                        all_daily_data.extend(daily_data["data"])
+                        _LOGGER.info(f"Batch {batch_count}: Received {batch_records} daily records")
                     else:
                         failed_batches += 1
                         _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
