@@ -5,11 +5,13 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 import sqlite3
 import os
+import asyncio
+import random
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from .npc_api import EVNAPI
-from .const import SCAN_INTERVAL, DOMAIN
+from .const import SCAN_INTERVAL, DOMAIN, API_CALL_DELAY_MIN, API_CALL_DELAY_MAX, API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,8 +94,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
                     else:
                         _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
+                    
+                    # Delay giữa các API call trong loop
+                    if len(missing_periods) > 1:
+                        delay = random.uniform(API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX)
+                        await asyncio.sleep(delay)
             else:
                 _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
+
+            # Delay giữa các API call khác nhau
+            await asyncio.sleep(random.uniform(API_CALL_DELAY_MIN, API_CALL_DELAY_MAX))
 
             # 5. Fetch bill data (hóa đơn) - ƯU TIÊN THỨ HAI
             # Dữ liệu hóa đơn từ API là chính xác nhất, ưu tiên trước daily data
@@ -119,8 +129,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.info(f"Successfully saved monthly data for {month}/{year}")
                     else:
                         _LOGGER.warning(f"Failed to fetch monthly data for {month}/{year}")
+                    
+                    # Delay giữa các API call trong loop
+                    if len(missing_periods) > 1:
+                        delay = random.uniform(API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX)
+                        await asyncio.sleep(delay)
             else:
                 _LOGGER.info(f"No missing monthly periods found for {self.customer_id}, skipping API calls")
+
+            # Delay giữa các API call khác nhau
+            await asyncio.sleep(random.uniform(API_CALL_DELAY_MIN, API_CALL_DELAY_MAX))
 
             # 6. Fetch daily data by month (từng tháng một) để tránh lỗi date calculation
             # Dữ liệu ngày chỉ dùng để hiển thị chi tiết, không ảnh hưởng đến tổng tháng
@@ -174,6 +192,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     else:
                         failed_batches += 1
                         _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
+                    
+                    # Delay giữa các API call trong loop
+                    if len(missing_by_month) > 1:
+                        delay = random.uniform(API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX)
+                        await asyncio.sleep(delay)
 
                 if all_daily_data:
                     _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
