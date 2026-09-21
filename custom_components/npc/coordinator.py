@@ -108,12 +108,19 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # 5. Fetch bill data (hóa đơn) - ƯU TIÊN THỨ HAI
             # Dữ liệu hóa đơn từ API là chính xác nhất, ưu tiên trước daily data
             # Chạy sau monthly history để không làm ảnh hưởng việc sync lịch sử
-            bill_data = await self.api.get_hoadon()
-            if bill_data and bill_data.get("data"):
-                _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
-                await self._save_bill_data(bill_data["data"])
-                await self._save_hoadon_to_monthly_bill(bill_data["data"])
-                _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
+            # Check xem bill data đã có mới chưa để tránh gọi API thừa
+            missing_bill_months = await self.hass.async_add_executor_job(self._get_missing_bill_months)
+            
+            if len(missing_bill_months) > 0:
+                _LOGGER.info(f"Found {len(missing_bill_months)} missing bill months for {self.customer_id}")
+                bill_data = await self.api.get_hoadon()
+                if bill_data and bill_data.get("data"):
+                    _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
+                    await self._save_bill_data(bill_data["data"])
+                    await self._save_hoadon_to_monthly_bill(bill_data["data"])
+                    _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
+            else:
+                _LOGGER.info(f"No missing bill data found for {self.customer_id}, skipping API call")
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
@@ -153,50 +160,99 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             if len(missing_daily_periods) > 0:
                 _LOGGER.info(f"Found {len(missing_daily_periods)} missing daily periods for {self.customer_id}")
 
-                # Group missing dates by month (từng tháng một)
-                from collections import defaultdict
-                missing_by_month = defaultdict(list)
+                # Check xem có phải là lần đầu sync (không có dữ liệu nào) không
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) FROM daily_consumption WHERE userevn = ?",
+                    (self.customer_id,)
+                )
+                total_count = cursor.fetchone()[0]
+                conn.close()
                 
-                for date_str in missing_daily_periods:
-                    try:
-                        date_obj = datetime.strptime(date_str, "%d-%m-%Y")
-                        month_key = (date_obj.year, date_obj.month)
-                        missing_by_month[month_key].append(date_str)
-                    except:
-                        continue
+                is_first_sync = (total_count == 0)
                 
                 all_daily_data = []
                 batch_count = 0
                 failed_batches = 0
                 
-                # Sort by month to process chronologically
-                for (year, month), dates in sorted(missing_by_month.items()):
-                    if not dates:
-                        continue
+                if is_first_sync:
+                    # Lần đầu sync: fetch toàn bộ từng tháng
+                    _LOGGER.info(f"First sync: fetching full months for {self.customer_id}")
                     
-                    batch_count += 1
+                    # Group missing dates by month (từng tháng một)
+                    from collections import defaultdict
+                    missing_by_month = defaultdict(list)
                     
-                    # Get first and last day of the month
-                    from calendar import monthrange
-                    _, last_day = monthrange(year, month)
-                    from_date = f"01/{month:02d}/{year}"
-                    to_date = f"{last_day:02d}/{month:02d}/{year}"
+                    for date_str in missing_daily_periods:
+                        try:
+                            date_obj = datetime.strptime(date_str, "%d-%m-%Y")
+                            month_key = (date_obj.year, date_obj.month)
+                            missing_by_month[month_key].append(date_str)
+                        except:
+                            continue
                     
-                    _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
-                    daily_data = await self.api.get_chisongay(from_date, to_date)
+                    # Sort by month to process chronologically
+                    for (year, month), dates in sorted(missing_by_month.items()):
+                        if not dates:
+                            continue
+                        
+                        batch_count += 1
+                        
+                        # Get first and last day of the month
+                        from calendar import monthrange
+                        _, last_day = monthrange(year, month)
+                        from_date = f"01/{month:02d}/{year}"
+                        to_date = f"{last_day:02d}/{month:02d}/{year}"
+                        
+                        _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
+                        daily_data = await self.api.get_chisongay(from_date, to_date)
 
-                    if daily_data and daily_data.get("data"):
-                        batch_records = len(daily_data["data"])
-                        all_daily_data.extend(daily_data["data"])
-                        _LOGGER.info(f"Batch {batch_count}: Received {batch_records} daily records")
-                    else:
-                        failed_batches += 1
-                        _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
+                        if daily_data and daily_data.get("data"):
+                            batch_records = len(daily_data["data"])
+                            all_daily_data.extend(daily_data["data"])
+                            _LOGGER.info(f"Batch {batch_count}: Received {batch_records} daily records")
+                        else:
+                            failed_batches += 1
+                            _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
+                        
+                        # Delay giữa các API call trong loop
+                        if len(missing_by_month) > 1:
+                            delay = random.uniform(API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX)
+                            await asyncio.sleep(delay)
+                else:
+                    # Có dữ liệu rời rạc: chỉ fetch từ ngày gần nhất đến hôm nay
+                    _LOGGER.info(f"Has existing data: fetching from latest to today for {self.customer_id}")
                     
-                    # Delay giữa các API call trong loop
-                    if len(missing_by_month) > 1:
-                        delay = random.uniform(API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX)
-                        await asyncio.sleep(delay)
+                    # Tìm ngày gần nhất có dữ liệu
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT ngay FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL) ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 1",
+                        (self.customer_id,)
+                    )
+                    result = cursor.fetchone()
+                    conn.close()
+                    
+                    if result and result[0]:
+                        latest_date_str = result[0]
+                        latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
+                        
+                        # Fetch từ ngày gần nhất + 1 đến hôm nay
+                        from_date = (latest_date + timedelta(days=1)).strftime("%d/%m/%Y")
+                        to_date = today.strftime("%d/%m/%Y")
+                        
+                        _LOGGER.info(f"Fetching daily data from {from_date} -> {to_date} (latest data: {latest_date_str})")
+                        daily_data = await self.api.get_chisongay(from_date, to_date)
+
+                        if daily_data and daily_data.get("data"):
+                            batch_records = len(daily_data["data"])
+                            all_daily_data.extend(daily_data["data"])
+                            _LOGGER.info(f"Received {batch_records} daily records")
+                        else:
+                            _LOGGER.warning(f"No data received for {from_date} to {to_date}")
+                    else:
+                        _LOGGER.info(f"No existing data found for {self.customer_id}, skipping daily data fetch")
 
                 if all_daily_data:
                     _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
