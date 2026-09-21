@@ -391,19 +391,19 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                     end_prev_prev = datetime(end_prev.year, end_prev.month - 1, last_day).date()
             else:
                 if end_prev.day < self._ngaydauky:
-                        if end_prev.month == 1:
-                            prev_start_month = 12
-                            prev_start_year = end_prev.year - 1
-                        else:
-                            prev_start_month = end_prev.month - 1
-                            prev_start_year = end_prev.year
+                    if end_prev.month == 1:
+                        prev_start_month = 12
+                        prev_start_year = end_prev.year - 1
                     else:
-                        prev_start_month = end_prev.month
+                        prev_start_month = end_prev.month - 1
                         prev_start_year = end_prev.year
-                    last_day_of_month = monthrange(prev_start_year, prev_start_month)[1]
-                    day_to_use = min(self._ngaydauky, last_day_of_month)
-                    prev_start = datetime(prev_start_year, prev_start_month, day_to_use).date()
-                    end_prev_prev = prev_start - timedelta(days=1)
+                else:
+                    prev_start_month = end_prev.month
+                    prev_start_year = end_prev.year
+                last_day_of_month = monthrange(prev_start_year, prev_start_month)[1]
+                day_to_use = min(self._ngaydauky, last_day_of_month)
+                prev_start = datetime(prev_start_year, prev_start_month, day_to_use).date()
+                end_prev_prev = prev_start - timedelta(days=1)
                 end_prev_str = end_prev.strftime('%d-%m-%Y')
                 end_prev_prev_str = end_prev_prev.strftime('%d-%m-%Y')
                 _LOGGER.debug(f"Ngày cuối kỳ trước: {end_prev_str}, Ngày cuối kỳ trước nữa: {end_prev_prev_str}")
@@ -539,33 +539,33 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             if self._ngaydauky == 1:
                 if today.month == 1:
                     end_prev = datetime(today.year - 1, 12, 31).date()
-                    else:
-                        last_day = (datetime(today.year, today.month, 1) - timedelta(days=1)).day
-                        end_prev = datetime(today.year, today.month - 1, last_day).date()
                 else:
-                    end_prev = start_current - timedelta(days=1)
-                # Tính ngày cuối kỳ trước nữa
-                if self._ngaydauky == 1:
+                    last_day = (datetime(today.year, today.month, 1) - timedelta(days=1)).day
+                    end_prev = datetime(today.year, today.month - 1, last_day).date()
+            else:
+                end_prev = start_current - timedelta(days=1)
+            # Tính ngày cuối kỳ trước nữa
+            if self._ngaydauky == 1:
+                if end_prev.month == 1:
+                    end_prev_prev = datetime(end_prev.year - 1, 12, 31).date()
+                else:
+                    last_day = (datetime(end_prev.year, end_prev.month, 1) - timedelta(days=1)).day
+                    end_prev_prev = datetime(end_prev.year, end_prev.month - 1, last_day).date()
+            else:
+                if end_prev.day < self._ngaydauky:
                     if end_prev.month == 1:
-                        end_prev_prev = datetime(end_prev.year - 1, 12, 31).date()
+                        prev_start_month = 12
+                        prev_start_year = end_prev.year - 1
                     else:
-                        last_day = (datetime(end_prev.year, end_prev.month, 1) - timedelta(days=1)).day
-                        end_prev_prev = datetime(end_prev.year, end_prev.month - 1, last_day).date()
-                else:
-                    if end_prev.day < self._ngaydauky:
-                        if end_prev.month == 1:
-                            prev_start_month = 12
-                            prev_start_year = end_prev.year - 1
-                        else:
-                            prev_start_month = end_prev.month - 1
-                            prev_start_year = end_prev.year
-                    else:
-                        prev_start_month = end_prev.month
+                        prev_start_month = end_prev.month - 1
                         prev_start_year = end_prev.year
-                    last_day_of_month = monthrange(prev_start_year, prev_start_month)[1]
-                    day_to_use = min(self._ngaydauky, last_day_of_month)
-                    prev_start = datetime(prev_start_year, prev_start_month, day_to_use).date()
-                    end_prev_prev = prev_start - timedelta(days=1)
+                else:
+                    prev_start_month = end_prev.month
+                    prev_start_year = end_prev.year
+                last_day_of_month = monthrange(prev_start_year, prev_start_month)[1]
+                day_to_use = min(self._ngaydauky, last_day_of_month)
+                prev_start = datetime(prev_start_year, prev_start_month, day_to_use).date()
+                end_prev_prev = prev_start - timedelta(days=1)
                 end_prev_str = end_prev.strftime('%d-%m-%Y')
                 end_prev_prev_str = end_prev_prev.strftime('%d-%m-%Y')
                 _LOGGER.debug(f"Ngày cuối kỳ trước: {end_prev_str}, Ngày cuối kỳ trước nữa: {end_prev_prev_str}")
