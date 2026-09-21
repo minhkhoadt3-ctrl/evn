@@ -355,32 +355,42 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                     nam = today.year
             
             _, san_luong = laydientieuthuthang(self._userevn, thang, nam)
+            
+            if san_luong is not None:
+                self._attributes = {
+                    "Tính theo hóa đơn": True,
+                    "Tháng": f"{thang:02d}",
+                    "Năm": str(nam),
+                    "Ngày đầu kỳ": str(self._ngaydauky)
+                }
+                return format_kwh(san_luong)
+            
+            # Fallback: tính từ chỉ số ngày
+            _LOGGER.debug("Không có dữ liệu tieu_thu_ky_truoc từ hóa đơn, tính theo chỉ số")
             self._attributes = {
                 "Tháng": f"{thang:02d}",
                 "Năm": str(nam),
                 "Ngày đầu kỳ": str(self._ngaydauky)
             }
-            if san_luong is None:
-                _LOGGER.debug("Không có dữ liệu tieu_thu_ky_truoc từ hóa đơn, tính theo chỉ số")
-                start_current, _, end_current, _ = tinhngaydauky(self._ngaydauky, today)
-                # Tính ngày cuối kỳ trước
-                if self._ngaydauky == 1:
-                    if today.month == 1:
-                        end_prev = datetime(today.year - 1, 12, 31).date()
-                    else:
-                        last_day = (datetime(today.year, today.month, 1) - timedelta(days=1)).day
-                        end_prev = datetime(today.year, today.month - 1, last_day).date()
+            start_current, _, end_current, _ = tinhngaydauky(self._ngaydauky, today)
+            # Tính ngày cuối kỳ trước
+            if self._ngaydauky == 1:
+                if today.month == 1:
+                    end_prev = datetime(today.year - 1, 12, 31).date()
                 else:
-                    end_prev = start_current - timedelta(days=1)
-                # Tính ngày cuối kỳ trước nữa
-                if self._ngaydauky == 1:
-                    if end_prev.month == 1:
-                        end_prev_prev = datetime(end_prev.year - 1, 12, 31).date()
-                    else:
-                        last_day = (datetime(end_prev.year, end_prev.month, 1) - timedelta(days=1)).day
-                        end_prev_prev = datetime(end_prev.year, end_prev.month - 1, last_day).date()
+                    last_day = (datetime(today.year, today.month, 1) - timedelta(days=1)).day
+                    end_prev = datetime(today.year, today.month - 1, last_day).date()
+            else:
+                end_prev = start_current - timedelta(days=1)
+            # Tính ngày cuối kỳ trước nữa
+            if self._ngaydauky == 1:
+                if end_prev.month == 1:
+                    end_prev_prev = datetime(end_prev.year - 1, 12, 31).date()
                 else:
-                    if end_prev.day < self._ngaydauky:
+                    last_day = (datetime(end_prev.year, end_prev.month, 1) - timedelta(days=1)).day
+                    end_prev_prev = datetime(end_prev.year, end_prev.month - 1, last_day).date()
+            else:
+                if end_prev.day < self._ngaydauky:
                         if end_prev.month == 1:
                             prev_start_month = 12
                             prev_start_year = end_prev.year - 1
@@ -442,6 +452,22 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             prev_end_ky_prev = prev_start_ky - timedelta(days=1)
             prev_start_ky_prev, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky_prev)
             
+            # Ưu tiên 1: Thử lấy từ monthly_bill trước
+            prev_start_month = prev_start_ky_prev.month
+            prev_start_year = prev_start_ky_prev.year
+            _, san_luong = laydientieuthuthang(self._userevn, prev_start_month, prev_start_year)
+            
+            if san_luong is not None:
+                self._attributes = {
+                    "Tính theo hóa đơn": True,
+                    "Tháng": f"{prev_start_month:02d}",
+                    "Năm": str(prev_start_year)
+                }
+                return format_kwh(san_luong)
+            
+            # Ưu tiên 2: Nếu không có dữ liệu từ monthly_bill, tính từ chỉ số ngày
+            _LOGGER.debug("Không có dữ liệu từ monthly_bill, tính từ chỉ số ngày")
+            
             # Lấy chỉ số đầu và cuối kỳ trước nữa
             chi_so_dau_prev_prev = laychisongay(self._userevn, prev_start_ky_prev.strftime("%Y-%m-%d"))
             if chi_so_dau_prev_prev is None or chi_so_dau_prev_prev <= 0:
@@ -474,11 +500,6 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                     "Ngày cuối kỳ trước nữa": ngay_cuoi_prev_prev
                 }
                 return format_kwh(san_luong)
-            
-            # Fallback: thử lấy từ monthly_bill
-            prev_start_month = prev_start_ky_prev.month
-            prev_start_year = prev_start_ky_prev.year
-            _, san_luong = laydientieuthuthang(self._userevn, prev_start_month, prev_start_year)
             self._attributes = {
                 "Tháng": f"{prev_start_month:02d}",
                 "Năm": str(prev_start_year)
@@ -497,19 +518,27 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                     thang = today.month
                     nam = today.year
             tien, _ = laydientieuthuthang(self._userevn, thang, nam)
+            
+            if tien is not None:
+                self._attributes = {
+                    "Tính theo hóa đơn": True,
+                    "Tháng": f"{thang:02d}",
+                    "Năm": str(nam)
+                }
+                return int(round(float(tien)))
+            
+            # Fallback: tính bằng công thức tiền điện
+            _LOGGER.debug("Không có dữ liệu tien_dien_ky_truoc từ hóa đơn, tính theo công thức")
             self._attributes = {
                 "Tháng": f"{thang:02d}",
                 "Năm": str(nam)
             }
-            # Nếu không có dữ liệu từ hóa đơn tháng, tính bằng công thức tiền điện
-            if tien is None:
-                _LOGGER.debug("Không có dữ liệu tien_dien_ky_truoc từ hóa đơn, tính theo công thức")
-                # Tính ngày cuối kỳ trước và ngày đầu kỳ trước
-                start_current, _, end_current, _ = tinhngaydauky(self._ngaydauky, today)
-                # Tính ngày cuối kỳ trước
-                if self._ngaydauky == 1:
-                    if today.month == 1:
-                        end_prev = datetime(today.year - 1, 12, 31).date()
+            # Tính ngày cuối kỳ trước và ngày đầu kỳ trước
+            start_current, _, end_current, _ = tinhngaydauky(self._ngaydauky, today)
+            # Tính ngày cuối kỳ trước
+            if self._ngaydauky == 1:
+                if today.month == 1:
+                    end_prev = datetime(today.year - 1, 12, 31).date()
                     else:
                         last_day = (datetime(today.year, today.month, 1) - timedelta(days=1)).day
                         end_prev = datetime(today.year, today.month - 1, last_day).date()
@@ -589,6 +618,22 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             prev_end_ky_prev = prev_start_ky - timedelta(days=1)
             prev_start_ky_prev, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky_prev)
             
+            # Ưu tiên 1: Thử lấy từ monthly_bill trước
+            prev_start_month = prev_start_ky_prev.month
+            prev_start_year = prev_start_ky_prev.year
+            tien, _ = laydientieuthuthang(self._userevn, prev_start_month, prev_start_year)
+            
+            if tien is not None:
+                self._attributes = {
+                    "Tính theo hóa đơn": True,
+                    "Tháng": f"{prev_start_month:02d}",
+                    "Năm": str(prev_start_year)
+                }
+                return int(round(float(tien)))
+            
+            # Ưu tiên 2: Nếu không có dữ liệu từ monthly_bill, tính từ chỉ số ngày
+            _LOGGER.debug("Không có dữ liệu từ monthly_bill, tính từ chỉ số ngày")
+            
             # Lấy chỉ số đầu và cuối kỳ trước nữa
             chi_so_dau_prev_prev = laychisongay(self._userevn, prev_start_ky_prev.strftime("%Y-%m-%d"))
             if chi_so_dau_prev_prev is None or chi_so_dau_prev_prev <= 0:
@@ -624,16 +669,6 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                     "Ngày cuối kỳ trước nữa": ngay_cuoi_prev_prev
                 }
                 return int(round(float(tien))) if tien is not None else 0
-            
-            # Fallback: thử lấy từ monthly_bill
-            prev_start_month = prev_start_ky_prev.month
-            prev_start_year = prev_start_ky_prev.year
-            tien, _ = laydientieuthuthang(self._userevn, prev_start_month, prev_start_year)
-            self._attributes = {
-                "Tháng": f"{prev_start_month:02d}",
-                "Năm": str(prev_start_year)
-            }
-            return int(round(float(tien))) if tien is not None else 0
         # Chi tiết tiêu thụ kỳ này
         if self._sensor_type == "chi_tiet_dien_tieu_thu_ky_nay":
             today = dt_util.now().date()

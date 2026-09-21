@@ -846,12 +846,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
             """)
 
-            # Xóa tiền cũ trong monthly_bill trước khi đồng bộ lại hóa đơn thực tế.
-            # Các bản cũ có thể đã được tự ước tính từ kWh (ví dụ ~2017 VND) và
-            # INSERT OR IGNORE sẽ giữ lại chúng nếu không làm sạch trước.
-            # san_luong_kwh vẫn được giữ nguyên; chỉ reset cột tiền.
-            cursor.execute("UPDATE monthly_bill SET tien_dien = NULL WHERE userevn = ?", (self.customer_id,))
-
+            # API chỉ trả về 3 tháng gần nhất, chỉ update khi giá trị thay đổi
+            # Không reset toàn bộ dữ liệu cũ để giữ lịch sử các tháng trước
             # Save từng hóa đơn thực tế vào monthly_bill
             for bill in data:
                 thang = bill.get("THANG")
@@ -860,12 +856,32 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 san_luong = self._parse_float(bill.get("DIEN_TTHU"))  # DIEN_TTHU = điện tiêu thụ
                 
                 if thang is not None and nam is not None:
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO monthly_bill 
-                        (userevn, thang, nam, tien_dien, san_luong_kwh)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (self.customer_id, thang, nam, tien_dien, san_luong))
-                    _LOGGER.debug(f"Saved hóa đơn: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
+                    # Check xem giá trị đã có trong database chưa
+                    cursor.execute(
+                        "SELECT tien_dien, san_luong_kwh FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ?",
+                        (self.customer_id, thang, nam)
+                    )
+                    existing = cursor.fetchone()
+                    
+                    # Chỉ update khi giá trị thay đổi hoặc chưa có
+                    should_update = False
+                    if not existing:
+                        should_update = True
+                    else:
+                        existing_tien, existing_sl = existing
+                        # So sánh giá trị (cho phép None)
+                        if (existing_tien != tien_dien) or (existing_sl != san_luong):
+                            should_update = True
+                    
+                    if should_update:
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO monthly_bill
+                            (userevn, thang, nam, tien_dien, san_luong_kwh)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (self.customer_id, thang, nam, tien_dien, san_luong))
+                        _LOGGER.debug(f"Updated hóa đơn: thang={thang}, nam={nam}, tien={tien_dien}, sl={san_luong}")
+                    else:
+                        _LOGGER.debug(f"Skipped unchanged bill: thang={thang}, nam={nam}")
 
             conn.commit()
             conn.close()
