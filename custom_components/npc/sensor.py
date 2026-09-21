@@ -453,15 +453,16 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             prev_start_ky_prev, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky_prev)
             
             # Ưu tiên 1: Thử lấy từ monthly_bill trước
-            prev_start_month = prev_start_ky_prev.month
-            prev_start_year = prev_start_ky_prev.year
-            _, san_luong = laydientieuthuthang(self._userevn, prev_start_month, prev_start_year)
+            # Lấy tháng từ ngày kết thúc kỳ (prev_end_ky_prev) thay vì ngày bắt đầu
+            prev_month = prev_end_ky_prev.month
+            prev_year = prev_end_ky_prev.year
+            _, san_luong = laydientieuthuthang(self._userevn, prev_month, prev_year)
             
             if san_luong is not None:
                 self._attributes = {
                     "Tính theo hóa đơn": True,
-                    "Tháng": f"{prev_start_month:02d}",
-                    "Năm": str(prev_start_year)
+                    "Tháng": f"{prev_month:02d}",
+                    "Năm": str(prev_year)
                 }
                 return format_kwh(san_luong)
             
@@ -501,8 +502,8 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                 }
                 return format_kwh(san_luong)
             self._attributes = {
-                "Tháng": f"{prev_start_month:02d}",
-                "Năm": str(prev_start_year)
+                "Tháng": f"{prev_month:02d}",
+                "Năm": str(prev_year)
             }
             return format_kwh(san_luong)
         # Tiền điện kỳ trước
@@ -619,15 +620,16 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             prev_start_ky_prev, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky_prev)
             
             # Ưu tiên 1: Thử lấy từ monthly_bill trước
-            prev_start_month = prev_start_ky_prev.month
-            prev_start_year = prev_start_ky_prev.year
-            tien, _ = laydientieuthuthang(self._userevn, prev_start_month, prev_start_year)
-            
+            # Lấy tháng từ ngày kết thúc kỳ (prev_end_ky_prev) thay vì ngày bắt đầu
+            prev_month = prev_end_ky_prev.month
+            prev_year = prev_end_ky_prev.year
+            tien, _ = laydientieuthuthang(self._userevn, prev_month, prev_year)
+
             if tien is not None:
                 self._attributes = {
                     "Tính theo hóa đơn": True,
-                    "Tháng": f"{prev_start_month:02d}",
-                    "Năm": str(prev_start_year)
+                    "Tháng": f"{prev_month:02d}",
+                    "Năm": str(prev_year)
                 }
                 return int(round(float(tien)))
             
