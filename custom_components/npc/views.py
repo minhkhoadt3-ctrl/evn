@@ -177,10 +177,18 @@ class EVNMonthlyDataView(HomeAssistantView):
         """Get monthly data for account."""
         try:
             hass = request.app["hass"]
-            # Get data from database using utils
             
-            # Get bills for current year
-            # Get all bills from history
+            # Get ngaydauky from config entry
+            domain_data = hass.data.get(DOMAIN, {})
+            ngaydauky = 1  # Default
+            for entry_id, data in domain_data.items():
+                if entry_id == "api_registered" or entry_id == "panel_registered":
+                    continue
+                if data.get("customer_id") == account:
+                    ngaydauky = data.get("ngaydauky", 1)
+                    break
+            
+            # Get bills from database
             bills = layhoadon(account, "all")
             
             # Format data for webui
@@ -189,6 +197,9 @@ class EVNMonthlyDataView(HomeAssistantView):
                 "SanLuong": [],
                 "TienDien": []
             }
+            
+            # Track which months have data
+            months_with_data = set()
             
             for bill in bills:
                 try:
@@ -221,12 +232,39 @@ class EVNMonthlyDataView(HomeAssistantView):
                             "Năm": nam_int,
                             "Tiền Điện": tien_dien_float
                         })
+                        months_with_data.add((thang_int, nam_int))
                         _LOGGER.debug(f"Added monthly data: {thang_int}/{nam_int} - san_luong={san_luong_float}, tien={tien_dien_float}")
                 except Exception as bill_ex:
                     _LOGGER.debug("Error processing bill %s: %s", bill, str(bill_ex))
                     continue
             
-            _LOGGER.info("EVNMonthlyDataView returning %d records for all years", len(monthly_data["SanLuong"]))
+            # Add current month temporary data from current_period table
+            today = datetime.now()
+            current_month = today.month
+            current_year = today.year
+            
+            # Only add current month if not already in bills
+            if (current_month, current_year) not in months_with_data:
+                # Get current period data
+                tieu_thu, tien_dien, ngay_dau_ky, ngay_cap_nhat = lay_ky_hien_tai(account)
+                
+                if tieu_thu is not None and tieu_thu > 0:
+                    monthly_data["SanLuong"].append({
+                        "Tháng": current_month,
+                        "Năm": current_year,
+                        "Điện tiêu thụ (KWh)": float(tieu_thu)
+                    })
+                    _LOGGER.debug(f"Added current month temporary data: {current_month}/{current_year} - san_luong={tieu_thu}")
+                
+                if tien_dien is not None and tien_dien > 0:
+                    monthly_data["TienDien"].append({
+                        "Tháng": current_month,
+                        "Năm": current_year,
+                        "Tiền Điện": float(tien_dien)
+                    })
+                    _LOGGER.debug(f"Added current month temporary bill: {current_month}/{current_year} - tien={tien_dien}")
+            
+            _LOGGER.info("EVNMonthlyDataView returning %d records for all years (ngaydauky=%d)", len(monthly_data["SanLuong"]), ngaydauky)
             return web.json_response(monthly_data)
             
         except Exception as ex:
