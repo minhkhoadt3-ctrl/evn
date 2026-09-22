@@ -238,19 +238,23 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         latest_date_str = result[0]
                         latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
                         
-                        # Fetch từ ngày gần nhất + 1 đến hôm nay
+                        # Fetch từ ngày gần nhất + 1 đến hôm qua (EVN chỉ có data đến hôm qua)
                         from_date = (latest_date + timedelta(days=1)).strftime("%d/%m/%Y")
-                        to_date = today.strftime("%d/%m/%Y")
+                        to_date = (today - timedelta(days=1)).strftime("%d/%m/%Y")
                         
-                        _LOGGER.info(f"Fetching daily data from {from_date} -> {to_date} (latest data: {latest_date_str})")
-                        daily_data = await self.api.get_chisongay(from_date, to_date)
-
-                        if daily_data and daily_data.get("data"):
-                            batch_records = len(daily_data["data"])
-                            all_daily_data.extend(daily_data["data"])
-                            _LOGGER.info(f"Received {batch_records} daily records")
+                        # Nếu from_date > to_date thì không cần fetch
+                        if from_date > to_date:
+                            _LOGGER.info(f"Data is already up to date (latest: {latest_date_str}), skipping daily data fetch")
                         else:
-                            _LOGGER.warning(f"No data received for {from_date} to {to_date}")
+                            _LOGGER.info(f"Fetching daily data from {from_date} -> {to_date} (latest data: {latest_date_str})")
+                            daily_data = await self.api.get_chisongay(from_date, to_date)
+
+                            if daily_data and daily_data.get("data"):
+                                batch_records = len(daily_data["data"])
+                                all_daily_data.extend(daily_data["data"])
+                                _LOGGER.info(f"Received {batch_records} daily records")
+                            else:
+                                _LOGGER.warning(f"No data received for {from_date} to {to_date}")
                     else:
                         _LOGGER.info(f"No existing data found for {self.customer_id}, skipping daily data fetch")
 
@@ -474,10 +478,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 start_date = ten_days_ago
                 _LOGGER.info(f"Latest data {latest_date_str} is within last {days_to_check} days, checking last {days_to_check} days from {start_date.strftime('%d/%m/%Y')}")
         
-        end_date = today
+        # EVN chỉ có data đến hôm qua, không check ngày hiện tại
+        end_date = today - timedelta(days=1)
         
-        # Nếu start_date > today thì không cần check
-        if start_date > today:
+        # Nếu start_date > end_date thì không cần check
+        if start_date > end_date:
             _LOGGER.info(f"Data is already up to date, no missing data needed")
             conn.close()
             return []
