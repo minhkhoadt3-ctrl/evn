@@ -10,6 +10,7 @@ import random
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 from .npc_api import EVNAPI
 from .const import SCAN_INTERVAL, DOMAIN, API_CALL_DELAY_MIN, API_CALL_DELAY_MAX, API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX
 
@@ -48,7 +49,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             # 3. Fetch power outage schedule FIRST.
             # This must not be blocked by the much heavier historical sync below.
-            today = datetime.now()
+            today = dt_util.now()
             outage_from = today.strftime("%d/%m/%Y")
             outage_to = (today + timedelta(days=30)).strftime("%d/%m/%Y")
             try:
@@ -237,6 +238,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     if result and result[0]:
                         latest_date_str = result[0]
                         latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
+                        # Convert to timezone-aware to match today
+                        latest_date = dt_util.as_local(latest_date)
                         
                         # Fetch từ ngày gần nhất + 1 đến hôm nay
                         from_date = (latest_date + timedelta(days=1)).strftime("%d/%m/%Y")
@@ -265,7 +268,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # 7. Power outage was synchronized at the start of this update cycle.
 
             return {
-                "last_update": datetime.now().isoformat(),
+                "last_update": dt_util.now().isoformat(),
                 "customer_id": self.customer_id,
             }
 
@@ -322,7 +325,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _cleanup_history_retention(self):
         """Keep only records from 2025 onward."""
-        today = datetime.now()
+        today = dt_util.now()
         cutoff = datetime(2025, 1, 1)
         cutoff_month = cutoff.year * 12 + cutoff.month
         conn = sqlite3.connect(self.db_path)
@@ -355,7 +358,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         Chỉ lấy đến tháng trước tháng hiện tại (tháng hiện tại chưa hết kỳ).
         """
         missing = []
-        today = datetime.now()
+        today = dt_util.now()
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -441,7 +444,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         Nếu nằm trong khoảng này, check toàn bộ 10 ngày.
         """
         missing = []
-        today = datetime.now()
+        today = dt_util.now()
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -465,6 +468,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         else:
             # Có dữ liệu, parse ngày gần nhất
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
+            # Convert latest_date to timezone-aware to match today
+            latest_date = dt_util.as_local(latest_date)
             
             # Nếu ngày gần nhất nằm ngoài khoảng 10 ngày (cách > 10 ngày), check từ ngày đó đến hôm nay
             if latest_date < ten_days_ago:
@@ -504,7 +509,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
     def _get_missing_bill_months(self):
         """Identify months that are missing bill data (tien_dien)."""
         missing = []
-        today = datetime.now()
+        today = dt_util.now()
 
         # Chỉ lấy từ tháng 1/2025 đến hiện tại
         first_month = datetime(2025, 1, 1)
@@ -810,7 +815,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     break
 
             # Ghi vào database (cả khi có hoặc không có hóa đơn CHUATT)
-            ngay_cap_nhat = datetime.now().strftime("%d-%m-%Y")
+            ngay_cap_nhat = dt_util.now().strftime("%d-%m-%Y")
             cursor.execute("""
                 INSERT OR REPLACE INTO tien_no_evn 
                 (userevn, tien_no, ngay_cap_nhat)
@@ -1058,7 +1063,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     try:
                         # Append current year. 
                         # This isn't perfect but handles the "04/11 đến 06/11" case where year is implicit
-                        current_year = datetime.now().year
+                        current_year = dt_util.now().year
                         date_with_year = f"{date_str}/{current_year}"
                         dt = datetime.strptime(date_with_year, "%d/%m/%Y")
                         return dt.strftime("%d-%m-%Y")
@@ -1095,7 +1100,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Default to today
         _LOGGER.debug(f"Could not parse date from record: {record}, using today")
-        return datetime.now().strftime("%d-%m-%Y")
+        return dt_util.now().strftime("%d-%m-%Y")
 
     def _parse_date_for_sort(self, record: Dict) -> datetime:
         """Parse date for sorting purposes."""
@@ -1136,7 +1141,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Default to today if parsing fails
         _LOGGER.debug(f"Could not parse date for sort from record: {record}, using today")
-        return datetime.now()
+        return dt_util.now()
 
     def _parse_float(self, value: Any) -> Optional[float]:
         """Parse float value from various formats."""

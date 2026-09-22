@@ -8,6 +8,7 @@ from pathlib import Path
 
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, CONF_CUSTOMER_ID
 from .utils import layhoadon, laykhoangtieuthukynay, lay_ky_hien_tai, get_db_conn, tinhtiendien
@@ -195,7 +196,7 @@ class EVNMonthlyDataView(HomeAssistantView):
                     thang = bill[0]
                     tien_dien = bill[1]
                     san_luong = bill[2]
-                    nam = bill[3] if len(bill) > 3 else datetime.now().year
+                    nam = bill[3] if len(bill) > 3 else dt_util.now().year
                     
                     # Safely convert
                     thang_int = int(thang) if thang is not None else 0
@@ -207,7 +208,7 @@ class EVNMonthlyDataView(HomeAssistantView):
                         tien_dien_float = float(tien_dien) if tien_dien is not None else 0
                     except (TypeError, ValueError):
                         tien_dien_float = 0
-                    nam_int = int(nam) if nam is not None else datetime.now().year
+                    nam_int = int(nam) if nam is not None else dt_util.now().year
                     
                     # Chỉ thêm vào kết quả nếu có ít nhất san_luong hoặc tien_dien
                     if san_luong_float > 0 or tien_dien_float > 0:
@@ -253,7 +254,7 @@ class EVNDailyDataView(HomeAssistantView):
         try:
             hass = request.app["hass"]
             # Get data from 2025 to today (Server EVN limit)
-            today = datetime.now()
+            today = dt_util.now()
             start_date = datetime(2025, 1, 1)
             
             # laykhoangtieuthukynay expects format dd/mm/yyyy and converts to dd-mm-yyyy
