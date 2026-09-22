@@ -435,10 +435,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         return missing
 
     def _get_missing_daily_periods(self):
-        """Identify missing daily periods only in the last 10 days from today.
-        Chỉ tìm thiếu trong 10 ngày gần nhất tính từ hôm nay (lùi 10 ngày).
-        Nếu ngày cuối trong database nằm ngoài khoảng 10 ngày này, check từ ngày đó đến hôm nay.
-        Nếu nằm trong khoảng này, check toàn bộ 10 ngày.
+        """Identify missing daily periods.
+        Nếu không có dữ liệu nào (Force Resync): sync từ 01/01/2025
+        Nếu có dữ liệu: chỉ check 10 ngày gần nhất để tối ưu performance.
         """
         missing = []
         today = datetime.now()
@@ -454,16 +453,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         result = cursor.fetchone()
         latest_date_str = result[0] if result and result[0] else None
         
-        # Check 10 ngày gần nhất từ hôm nay (lùi 10 ngày)
-        days_to_check = 10
-        ten_days_ago = today - timedelta(days=days_to_check)
-        
         if not latest_date_str:
-            # Không có dữ liệu nào, check toàn bộ 10 ngày
-            start_date = ten_days_ago
-            _LOGGER.info(f"No existing daily data found, checking last {days_to_check} days from {start_date.strftime('%d/%m/%Y')}")
+            # Không có dữ liệu nào (Force Resync hoặc lần đầu sync): sync từ 01/01/2025
+            start_date = datetime(2025, 1, 1)
+            _LOGGER.info(f"No existing daily data found, syncing from 01/01/2025 to today")
         else:
-            # Có dữ liệu, parse ngày gần nhất
+            # Có dữ liệu: chỉ check 10 ngày gần nhất để tối ưu
+            days_to_check = 10
+            ten_days_ago = today - timedelta(days=days_to_check)
+            
+            # Parse ngày gần nhất
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
             
             # Nếu ngày gần nhất nằm ngoài khoảng 10 ngày (cách > 10 ngày), check từ ngày đó đến hôm nay
@@ -551,6 +550,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         cursor.execute("DELETE FROM monthly_bill WHERE userevn = ?", (self.customer_id,))
         cursor.execute("DELETE FROM power_outage_schedule WHERE userevn = ?", (self.customer_id,))
         cursor.execute("DELETE FROM tien_no_evn WHERE userevn = ?", (self.customer_id,))
+        cursor.execute("DELETE FROM current_period WHERE userevn = ?", (self.customer_id,))
 
         conn.commit()
         conn.close()
