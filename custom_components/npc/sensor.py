@@ -319,8 +319,12 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
         # Tiêu thụ hôm qua
         if self._sensor_type == "tieu_thu_hom_qua":
             yesterday = today - timedelta(days=1)
-            kwh = laydientieuthungay(self._userevn, yesterday.strftime("%Y-%m-%d"))
-            self._attributes = {"Ngày": yesterday.strftime("%d-%m-%Y")}
+            yesterday_str_input = yesterday.strftime("%Y-%m-%d")
+            yesterday_str_display = yesterday.strftime("%d-%m-%Y")
+            _LOGGER.info(f"DEBUG tieu_thu_hom_qua: today={today}, yesterday={yesterday}, searching for {yesterday_str_input}")
+            kwh = laydientieuthungay(self._userevn, yesterday_str_input)
+            _LOGGER.info(f"DEBUG tieu_thu_hom_qua: kwh={kwh} for date {yesterday_str_input}")
+            self._attributes = {"Ngày": yesterday_str_display}
             return format_kwh(kwh)
         # Tiêu thụ hôm kia
         if self._sensor_type == "tieu_thu_hom_kia":

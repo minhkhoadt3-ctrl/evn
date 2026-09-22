@@ -148,7 +148,9 @@ def laychisongay(userevn, date_str):
 
 
 def laydientieuthungay(userevn, date_str):
+    original_date_str = date_str
     date_str = dinhdangngay(date_str)
+    _LOGGER.info(f"DEBUG laydientieuthungay: userevn={userevn}, input_date={original_date_str}, converted_date={date_str}")
     conn = get_db_conn()
     cursor = conn.cursor()
     cursor.execute(
@@ -157,9 +159,13 @@ def laydientieuthungay(userevn, date_str):
     )
     row = cursor.fetchone()
     conn.close()
+    _LOGGER.info(f"DEBUG laydientieuthungay: row={row}, found={row is not None}")
     if not row or row[0] is None or str(row[0]).strip().lower() == "không có dữ liệu":
+        _LOGGER.warning(f"DEBUG laydientieuthungay: returning None for {date_str}")
         return None
-    return chuyen_doi_so(row[0])
+    result = chuyen_doi_so(row[0])
+    _LOGGER.info(f"DEBUG laydientieuthungay: returning {result} for {date_str}")
+    return result
 
 
 def laydientieuthuthang(userevn, month, year):
