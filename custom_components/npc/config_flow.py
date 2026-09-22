@@ -3,7 +3,6 @@
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers import selector
-from homeassistant.util import dt as dt_util
 from typing import Any
 import logging
 
@@ -141,8 +140,8 @@ Nhập username và password để đăng nhập vào hệ thống EVN.
 
                     if await api.login():
                         # Verify we can get data
-                        from datetime import timedelta
-                        today = dt_util.now()
+                        from datetime import datetime, timedelta
+                        today = datetime.now()
                         from_date = (today - timedelta(days=7)).strftime("%d/%m/%Y")
                         to_date = today.strftime("%d/%m/%Y")
                         

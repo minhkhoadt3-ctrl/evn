@@ -621,33 +621,6 @@ class DataManager {
             });
         }
 
-        // Bổ sung kỳ hiện tại từ sensor API (currentPeriodFromSensor)
-        // Ưu tiên dữ liệu sensor hơn dailyData vì đã được tính chính xác từ chỉ số
-        if (this.currentPeriodFromSensor && this.currentPeriodFromSensor.tieu_thu_ky_nay > 0) {
-            const today = new Date();
-            const currentPeriodKey = getPeriodKey(today);
-            const key = `${currentPeriodKey.year}-${currentPeriodKey.month}`;
-
-            // Chỉ bổ sung nếu monthlyData không có kỳ đó (không có bill)
-            if (!monthlyMap.has(key)) {
-                const consumption = this.currentPeriodFromSensor.tieu_thu_ky_nay;
-                const cost = this.currentPeriodFromSensor.tien_dien_ky_nay || 0;
-
-                monthlyMap.set(key, {
-                    Tháng: currentPeriodKey.month,
-                    Năm: currentPeriodKey.year,
-                    consumption: consumption
-                });
-
-                // Nếu có tiền từ sensor, ưu tiên nó
-                if (cost > 0) {
-                    costMap.set(key, cost);
-                }
-
-                console.log(`⚡ Added current period from sensor: ${currentPeriodKey.month}/${currentPeriodKey.year} - ${consumption} kWh, ${cost} VND`);
-            }
-        }
-
         // TIỀN: ưu tiên hóa đơn thực tế, nếu không có thì tự tính từ sản lượng
         const costMap = new Map();
         if (Array.isArray(monthlyData.TienDien)) {
