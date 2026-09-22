@@ -153,19 +153,63 @@ def laydientieuthungay(userevn, date_str):
     _LOGGER.info(f"DEBUG laydientieuthungay: userevn={userevn}, input_date={original_date_str}, converted_date={date_str}")
     conn = get_db_conn()
     cursor = conn.cursor()
+    # Lấy cả chi_so và dien_tieu_thu_kwh
     cursor.execute(
-        "SELECT dien_tieu_thu_kwh FROM daily_consumption WHERE userevn=? AND ngay=?",
+        "SELECT chi_so, dien_tieu_thu_kwh FROM daily_consumption WHERE userevn=? AND ngay=?",
         (userevn, date_str)
     )
     row = cursor.fetchone()
     conn.close()
     _LOGGER.info(f"DEBUG laydientieuthungay: row={row}, found={row is not None}")
-    if not row or row[0] is None or str(row[0]).strip().lower() == "không có dữ liệu":
-        _LOGGER.warning(f"DEBUG laydientieuthungay: returning None for {date_str}")
+    
+    if not row:
+        _LOGGER.warning(f"DEBUG laydientieuthungay: no record found for {date_str}")
         return None
-    result = chuyen_doi_so(row[0])
-    _LOGGER.info(f"DEBUG laydientieuthungay: returning {result} for {date_str}")
-    return result
+    
+    chi_so, dien_tieu_thu = row
+    
+    # Ưu tiên dùng dien_tieu_thu_kwh nếu có
+    if dien_tieu_thu is not None and str(dien_tieu_thu).strip().lower() != "không có dữ liệu":
+        result = chuyen_doi_so(dien_tieu_thu)
+        _LOGGER.info(f"DEBUG laydientieuthungay: returning dien_tieu_thu={result} for {date_str}")
+        return result
+    
+    # Nếu dien_tieu_thu là NULL nhưng có chi_so, thử tính từ chỉ số
+    if chi_so is not None and str(chi_so).strip().lower() != "không có dữ liệu":
+        _LOGGER.info(f"DEBUG laydientieuthungay: dien_tieu_thu is NULL but chi_so={chi_so}, trying to calculate from meter readings")
+        
+        # Lấy chỉ số ngày trước đó để tính tiêu thụ
+        try:
+            from datetime import datetime, timedelta
+            ngay_obj = datetime.strptime(date_str, "%d-%m-%Y")
+            ngay_truoc = (ngay_obj - timedelta(days=1)).strftime("%d-%m-%Y")
+            
+            conn = get_db_conn()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT chi_so FROM daily_consumption WHERE userevn=? AND ngay=?",
+                (userevn, ngay_truoc)
+            )
+            row_truoc = cursor.fetchone()
+            conn.close()
+            
+            if row_truoc and row_truoc[0] is not None:
+                chi_so_truoc = chuyen_doi_so(row_truoc[0])
+                chi_so_hien = chuyen_doi_so(chi_so)
+                
+                if chi_so_hien > chi_so_truoc:
+                    calculated_consumption = chi_so_hien - chi_so_truoc
+                    _LOGGER.info(f"DEBUG laydientieuthungay: calculated consumption from meter readings: {calculated_consumption} (chi_so_truoc={chi_so_truoc}, chi_so_hien={chi_so_hien})")
+                    return calculated_consumption
+                else:
+                    _LOGGER.warning(f"DEBUG laydientieuthungay: chi_so decreased or equal, cannot calculate (chi_so_truoc={chi_so_truoc}, chi_so_hien={chi_so_hien})")
+            else:
+                _LOGGER.warning(f"DEBUG laydientieuthungay: no previous day data found for {ngay_truoc}")
+        except Exception as e:
+            _LOGGER.error(f"DEBUG laydientieuthungay: error calculating from meter readings: {e}")
+    
+    _LOGGER.warning(f"DEBUG laydientieuthungay: returning None for {date_str} (no valid data)")
+    return None
 
 
 def laydientieuthuthang(userevn, month, year):
