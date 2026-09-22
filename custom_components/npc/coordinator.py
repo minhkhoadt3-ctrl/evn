@@ -606,6 +606,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug(f"Skipping record without valid date: {record}")
                     skipped_count += 1
                     continue
+                
+                _LOGGER.info(f"DEBUG _save_daily_data: Processing record for {ngay}, raw_record={record}")
                     
                 # Try multiple field names for chi_so
                 chi_so = self._parse_float(
@@ -627,6 +629,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     record.get("san_luong") or
                     record.get("DIEN_TIEU_THU_KWH")
                 )
+                
+                _LOGGER.info(f"DEBUG _save_daily_data: {ngay} - chi_so={chi_so}, dien_tieu_thu={dien_tieu_thu} (from API fields)")
                 
                 # If not provided by API, calculate from meter readings
                 # Only calculate if prev_ngay is the previous day (not many days ago)
