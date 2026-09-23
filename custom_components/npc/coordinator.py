@@ -235,8 +235,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         latest_date_str = result[0]
                         latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
                         
-                        # Fetch từ ngày gần nhất + 1 đến hôm qua (EVN chỉ có data đến hôm qua)
-                        from_date = (latest_date + timedelta(days=1)).strftime("%d/%m/%Y")
+                        # Fetch từ ngày có dữ liệu cuối cùng đến hôm qua (để update lại nếu cần)
+                        from_date = latest_date.strftime("%d/%m/%Y")
                         to_date = (today - timedelta(days=1)).strftime("%d/%m/%Y")
                         
                         # Nếu from_date > to_date thì không cần fetch
@@ -469,11 +469,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             start_date = datetime(2025, 1, 1)
             _LOGGER.info(f"No existing daily data found, syncing from 01/01/2025 to today")
         else:
-            # Có dữ liệu: fetch từ ngày có dữ liệu cuối cùng + 1 đến hôm qua
+            # Có dữ liệu: fetch từ ngày có dữ liệu cuối cùng đến hôm qua
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
             
-            # start_date = ngày có dữ liệu cuối cùng + 1
-            start_date = latest_date + timedelta(days=1)
+            # start_date = ngày có dữ liệu cuối cùng (không +1 để update lại nếu cần)
+            start_date = latest_date
             _LOGGER.info(f"Latest data: {latest_date_str}, fetching from {start_date.strftime('%d/%m/%Y')} to yesterday")
         
         # EVN chỉ có data đến hôm qua, không check ngày hiện tại
