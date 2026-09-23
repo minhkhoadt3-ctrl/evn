@@ -492,10 +492,12 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             ngay = date_cursor.strftime("%d-%m-%Y")
 
             cursor.execute(
-                "SELECT 1 FROM daily_consumption WHERE userevn = ? AND ngay = ?",
+                "SELECT dien_tieu_thu_kwh FROM daily_consumption WHERE userevn = ? AND ngay = ?",
                 (self.customer_id, ngay)
             )
-            if not cursor.fetchone():
+            result = cursor.fetchone()
+            # Coi ngày thiếu nếu: không có record HOẶC có record nhưng dien_tieu_thu_kwh là NULL
+            if not result or result[0] is None:
                 missing.append(ngay)
 
             date_cursor += timedelta(days=1)
