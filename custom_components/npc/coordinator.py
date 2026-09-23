@@ -108,19 +108,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # 5. Fetch bill data (hóa đơn) - ƯU TIÊN THỨ HAI
             # Dữ liệu hóa đơn từ API là chính xác nhất, ưu tiên trước daily data
             # Chạy sau monthly history để không làm ảnh hưởng việc sync lịch sử
-            # Check xem bill data đã có mới chưa để tránh gọi API thừa
-            missing_bill_months = await self.hass.async_add_executor_job(self._get_missing_bill_months)
-            
-            if len(missing_bill_months) > 0:
-                _LOGGER.info(f"Found {len(missing_bill_months)} missing bill months for {self.customer_id}")
-                bill_data = await self.api.get_hoadon()
-                if bill_data and bill_data.get("data"):
-                    _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
-                    await self._save_bill_data(bill_data["data"])
-                    await self._save_hoadon_to_monthly_bill(bill_data["data"])
-                    _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
+            # EVN API chỉ trả 3 tháng gần nhất, nên luôn gọi API mỗi lần sync
+            _LOGGER.info(f"Fetching bill data for {self.customer_id}")
+            bill_data = await self.api.get_hoadon()
+            if bill_data and bill_data.get("data"):
+                _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
+                await self._save_bill_data(bill_data["data"])
+                await self._save_hoadon_to_monthly_bill(bill_data["data"])
+                _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
             else:
-                _LOGGER.info(f"No missing bill data found for {self.customer_id}, skipping API call")
+                _LOGGER.warning(f"No bill data received for {self.customer_id}")
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
@@ -462,21 +459,12 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             start_date = datetime(2025, 1, 1)
             _LOGGER.info(f"No existing daily data found, syncing from 01/01/2025 to today")
         else:
-            # Có dữ liệu: chỉ check 10 ngày gần nhất để tối ưu
-            days_to_check = 10
-            ten_days_ago = today - timedelta(days=days_to_check)
-            
-            # Parse ngày gần nhất
+            # Có dữ liệu: fetch từ ngày có dữ liệu cuối cùng + 1 đến hôm qua
             latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
             
-            # Nếu ngày gần nhất nằm ngoài khoảng 10 ngày (cách > 10 ngày), check từ ngày đó đến hôm nay
-            if latest_date < ten_days_ago:
-                start_date = latest_date + timedelta(days=1)
-                _LOGGER.info(f"Latest data {latest_date_str} is older than {days_to_check} days, checking from {start_date.strftime('%d/%m/%Y')} to today")
-            else:
-                # Ngày gần nhất nằm trong khoảng 10 ngày, check toàn bộ 10 ngày
-                start_date = ten_days_ago
-                _LOGGER.info(f"Latest data {latest_date_str} is within last {days_to_check} days, checking last {days_to_check} days from {start_date.strftime('%d/%m/%Y')}")
+            # start_date = ngày có dữ liệu cuối cùng + 1
+            start_date = latest_date + timedelta(days=1)
+            _LOGGER.info(f"Latest data: {latest_date_str}, fetching from {start_date.strftime('%d/%m/%Y')} to yesterday")
         
         # EVN chỉ có data đến hôm qua, không check ngày hiện tại
         end_date = today - timedelta(days=1)
@@ -505,45 +493,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn.close()
         return missing
 
-    def _get_missing_bill_months(self):
-        """Identify months that are missing bill data (tien_dien)."""
-        missing = []
-        today = datetime.now()
-
-        # Chỉ lấy từ tháng 1/2025 đến hiện tại
-        first_month = datetime(2025, 1, 1)
-        current_month = datetime(today.year, today.month, 1)
-
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        month_cursor = first_month
-        while month_cursor <= current_month:
-            month = month_cursor.month
-            year = month_cursor.year
-
-            # Đảm bảo không lùi về năm trước 2025
-            if year < 2025:
-                if month_cursor.month == 12:
-                    month_cursor = datetime(month_cursor.year + 1, 1, 1)
-                else:
-                    month_cursor = datetime(month_cursor.year, month_cursor.month + 1, 1)
-                continue
-
-            cursor.execute(
-                "SELECT 1 FROM monthly_bill WHERE userevn = ? AND thang = ? AND nam = ? AND tien_dien IS NOT NULL",
-                (self.customer_id, month, year)
-            )
-            if not cursor.fetchone():
-                missing.append((month, year))
-
-            if month_cursor.month == 12:
-                month_cursor = datetime(month_cursor.year + 1, 1, 1)
-            else:
-                month_cursor = datetime(month_cursor.year, month_cursor.month + 1, 1)
-
-        conn.close()
-        return missing
+    # _get_missing_bill_months() đã được xóa vì EVN API chỉ trả 3 tháng gần nhất
+    # Luôn gọi API get_hoadon() mỗi lần sync để cập nhật 3 tháng gần nhất
 
     def force_resync_all_data(self):
         """Force resync all data from 2025 to now (tạm thời để khôi phục dữ liệu)."""
