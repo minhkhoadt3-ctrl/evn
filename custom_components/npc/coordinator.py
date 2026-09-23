@@ -221,11 +221,11 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     # Có dữ liệu rời rạc: chỉ fetch từ ngày gần nhất đến hôm nay
                     _LOGGER.info(f"Has existing data: fetching from latest to today for {self.customer_id}")
                     
-                    # Tìm ngày gần nhất có dữ liệu
+                    # Tìm ngày gần nhất có dữ liệu tiêu thụ (dien_tieu_thu_kwh IS NOT NULL)
                     conn = sqlite3.connect(self.db_path)
                     cursor = conn.cursor()
                     cursor.execute(
-                        "SELECT ngay FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL) ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 1",
+                        "SELECT ngay FROM daily_consumption WHERE userevn = ? AND dien_tieu_thu_kwh IS NOT NULL ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 1",
                         (self.customer_id,)
                     )
                     result = cursor.fetchone()
@@ -446,9 +446,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Lấy ngày gần nhất có dữ liệu thực sự (có chi_so hoặc dien_tieu_thu_kwh)
+        # Lấy ngày gần nhất có dữ liệu tiêu thụ (dien_tieu_thu_kwh IS NOT NULL)
         cursor.execute(
-            "SELECT ngay FROM daily_consumption WHERE userevn = ? AND (chi_so IS NOT NULL OR dien_tieu_thu_kwh IS NOT NULL) ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 1",
+            "SELECT ngay FROM daily_consumption WHERE userevn = ? AND dien_tieu_thu_kwh IS NOT NULL ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 1",
             (self.customer_id,)
         )
         result = cursor.fetchone()
