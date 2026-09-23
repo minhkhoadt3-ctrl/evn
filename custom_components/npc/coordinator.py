@@ -454,6 +454,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         result = cursor.fetchone()
         latest_date_str = result[0] if result and result[0] else None
         
+        # DEBUG: Log 5 ngày gần nhất trong DB
+        cursor.execute(
+            "SELECT ngay, chi_so, dien_tieu_thu_kwh FROM daily_consumption WHERE userevn = ? ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 5",
+            (self.customer_id,)
+        )
+        recent_rows = cursor.fetchall()
+        _LOGGER.info(f"DEBUG: 5 recent days in DB for {self.customer_id}:")
+        for row in recent_rows:
+            _LOGGER.info(f"  - {row[0]}: chi_so={row[1]}, dien_tieu_thu_kwh={row[2]}")
+        
         if not latest_date_str:
             # Không có dữ liệu nào (Force Resync hoặc lần đầu sync): sync từ 01/01/2025
             start_date = datetime(2025, 1, 1)
