@@ -202,13 +202,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         from_date = f"01/{month:02d}/{year}"
                         to_date = f"{last_day:02d}/{month:02d}/{year}"
                         
-                        _LOGGER.info(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
+                        _LOGGER.debug(f"Fetching daily data batch {batch_count}: {from_date} -> {to_date} ({len(dates)} dates in {month:02d}/{year})")
                         daily_data = await self.api.get_chisongay(from_date, to_date)
 
                         if daily_data and daily_data.get("data"):
                             batch_records = len(daily_data["data"])
                             all_daily_data.extend(daily_data["data"])
-                            _LOGGER.info(f"Batch {batch_count}: Received {batch_records} daily records")
+                            _LOGGER.debug(f"Batch {batch_count}: Received {batch_records} daily records")
                         else:
                             failed_batches += 1
                             _LOGGER.warning(f"Batch {batch_count}: No data received for {from_date} to {to_date}")
@@ -241,7 +241,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         
                         # Nếu from_date > to_date thì không cần fetch
                         if from_date > to_date:
-                            _LOGGER.info(f"Data is already up to date (latest: {latest_date_str}), skipping daily data fetch")
+                            _LOGGER.debug(f"Data is already up to date (latest: {latest_date_str}), skipping daily data fetch")
                         else:
                             _LOGGER.info(f"Fetching daily data from {from_date} -> {to_date} (latest data: {latest_date_str})")
                             daily_data = await self.api.get_chisongay(from_date, to_date)
@@ -249,19 +249,19 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                             if daily_data and daily_data.get("data"):
                                 batch_records = len(daily_data["data"])
                                 all_daily_data.extend(daily_data["data"])
-                                _LOGGER.info(f"Received {batch_records} daily records")
+                                _LOGGER.debug(f"Received {batch_records} daily records")
                             else:
                                 _LOGGER.warning(f"No data received for {from_date} to {to_date}")
                     else:
                         _LOGGER.info(f"No existing data found for {self.customer_id}, skipping daily data fetch")
 
                 if all_daily_data:
-                    _LOGGER.info(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
+                    _LOGGER.debug(f"Daily data sync completed: {len(all_daily_data)} records collected, {failed_batches} batches failed")
                     await self._save_daily_data(all_daily_data)
                 else:
-                    _LOGGER.warning(f"No daily data collected for {self.customer_id}, skipping daily data save (failed batches: {failed_batches})")
+                    _LOGGER.debug(f"No daily data collected for {self.customer_id}, skipping daily data save (failed batches: {failed_batches})")
             else:
-                _LOGGER.info(f"No missing daily periods found for {self.customer_id}, skipping API calls")
+                _LOGGER.debug(f"No missing daily periods found for {self.customer_id}, skipping API calls")
 
             # 7. Power outage was synchronized at the start of this update cycle.
 
@@ -454,16 +454,6 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         result = cursor.fetchone()
         latest_date_str = result[0] if result and result[0] else None
         
-        # DEBUG: Log 5 ngày gần nhất trong DB
-        cursor.execute(
-            "SELECT ngay, chi_so, dien_tieu_thu_kwh FROM daily_consumption WHERE userevn = ? ORDER BY substr(ngay, 7, 4) || '-' || substr(ngay, 4, 2) || '-' || substr(ngay, 1, 2) DESC LIMIT 5",
-            (self.customer_id,)
-        )
-        recent_rows = cursor.fetchall()
-        _LOGGER.info(f"DEBUG: 5 recent days in DB for {self.customer_id}:")
-        for row in recent_rows:
-            _LOGGER.info(f"  - {row[0]}: chi_so={row[1]}, dien_tieu_thu_kwh={row[2]}")
-        
         if not latest_date_str:
             # Không có dữ liệu nào (Force Resync hoặc lần đầu sync): sync từ 01/01/2025
             start_date = datetime(2025, 1, 1)
@@ -649,7 +639,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             conn.commit()
             conn.close()
-            _LOGGER.info(f"Saved {saved_count} daily records for {self.customer_id}, skipped {skipped_count}")
+            _LOGGER.debug(f"Saved {saved_count} daily records for {self.customer_id}, skipped {skipped_count}")
             
             # DEBUG: Verify data was actually saved
             conn = sqlite3.connect(self.db_path)
@@ -853,13 +843,15 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             conn.commit()
             conn.close()
-            _LOGGER.info(f"Saved {len(data)} hóa đơn records to monthly_bill for {self.customer_id}")
+            _LOGGER.debug(f"Saved {len(data)} hóa đơn records to monthly_bill for {self.customer_id}")
 
         except Exception as e:
             _LOGGER.error(f"Error saving hóa đơn to monthly_bill: {e}", exc_info=True)
 
     async def _save_outage_data(self, data: list):
-        """Replace the customer's outage snapshot with the latest API response."""
+        """Replace the customer's outage snapshot with the latest API response.
+        Chỉ update khi data thực sự thay đổi để tối ưu performance.
+        """
         try:
             os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
             conn = sqlite3.connect(self.db_path)
@@ -879,7 +871,41 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             """)
 
             # API response is a snapshot for the requested 30-day window.
-            # Remove the old snapshot first so cancelled/removed schedules disappear.
+            # Check xem data mới có khác với data cũ không
+            # Nếu giống nhau thì skip DELETE/INSERT
+            
+            # Lấy data cũ
+            cursor.execute(
+                "SELECT ngay_bat_dau, thoi_gian_bat_dau, ngay_ket_thuc, thoi_gian_ket_thuc, ly_do, khu_vuc FROM power_outage_schedule WHERE userevn = ?",
+                (self.customer_id,)
+            )
+            old_data = set(cursor.fetchall())
+            
+            # Parse data mới
+            new_data = set()
+            for outage in (data or []):
+                try:
+                    ngay_bat_dau = outage.get("NGAY_BAT_DAU") or outage.get("ngay_bat_dau")
+                    ngay_ket_thuc = outage.get("NGAY_KET_THUC") or outage.get("ngay_ket_thuc")
+                    thoi_gian_bat_dau = outage.get("TGIAN_BDAU") or outage.get("thoi_gian_bat_dau") or outage.get("THOI_GIAN_BAT_DAU")
+                    thoi_gian_ket_thuc = outage.get("TGIAN_KTHUC") or outage.get("thoi_gian_ket_thuc") or outage.get("THOI_GIAN_KET_THUC")
+                    ly_do = outage.get("LY_DO") or outage.get("ly_do") or outage.get("LY_DO")
+                    khu_vuc = outage.get("KHUVUCMATDIEN") or outage.get("khu_vuc") or outage.get("KHU_VUC")
+                    
+                    if ngay_bat_dau and thoi_gian_bat_dau:
+                        new_data.add((ngay_bat_dau, thoi_gian_bat_dau, ngay_ket_thuc, thoi_gian_ket_thuc, ly_do, khu_vuc))
+                except Exception as e:
+                    _LOGGER.debug(f"Error parsing outage record: {e}")
+                    continue
+            
+            # Nếu data giống nhau → skip
+            if old_data == new_data:
+                _LOGGER.info(f"Outage data unchanged for {self.customer_id}, skipping update")
+                conn.close()
+                return
+            
+            # Data khác nhau → DELETE và INSERT lại
+            _LOGGER.debug(f"Outage data changed for {self.customer_id}, updating (old={len(old_data)}, new={len(new_data)})")
             cursor.execute(
                 "DELETE FROM power_outage_schedule WHERE userevn = ?",
                 (self.customer_id,),
@@ -972,7 +998,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             conn.commit()
             conn.close()
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"Saved outage snapshot for {self.customer_id}: "
                 f"{saved}/{len(data or [])} records"
             )
