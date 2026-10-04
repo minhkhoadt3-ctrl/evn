@@ -235,15 +235,25 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                         latest_date_str = result[0]
                         latest_date = datetime.strptime(latest_date_str, "%d-%m-%Y")
                         
-                        # Fetch từ ngày có dữ liệu cuối cùng đến hôm qua (để update lại nếu cần)
-                        from_date = latest_date.strftime("%d/%m/%Y")
-                        to_date = (today - timedelta(days=1)).strftime("%d/%m/%Y")
-                        
-                        # Nếu from_date > to_date thì không cần fetch
-                        if from_date > to_date:
-                            _LOGGER.debug(f"Data is already up to date (latest: {latest_date_str}), skipping daily data fetch")
+                        # Fetch từ ngày có dữ liệu cuối cùng đến hôm qua (để update lại nếu cần).
+                        # QUAN TRỌNG: không so sánh chuỗi DD/MM/YYYY vì sẽ sai khi qua tháng/năm
+                        # (ví dụ "30/09/2026" > "01/10/2026" theo thứ tự ký tự).
+                        to_date_obj = today - timedelta(days=1)
+
+                        if latest_date.date() > to_date_obj.date():
+                            _LOGGER.debug(
+                                "Daily data is already up to date: latest=%s, end=%s; skipping fetch",
+                                latest_date.strftime("%d-%m-%Y"),
+                                to_date_obj.strftime("%d-%m-%Y"),
+                            )
                         else:
-                            _LOGGER.info(f"Fetching daily data from {from_date} -> {to_date} (latest data: {latest_date_str})")
+                            # API EVN yêu cầu định dạng DD/MM/YYYY; chỉ format sau khi so sánh date.
+                            from_date = latest_date.strftime("%d/%m/%Y")
+                            to_date = to_date_obj.strftime("%d/%m/%Y")
+                            _LOGGER.info(
+                                f"Fetching daily data from {from_date} -> {to_date} "
+                                f"(latest data: {latest_date_str})"
+                            )
                             daily_data = await self.api.get_chisongay(from_date, to_date)
 
                             if daily_data and daily_data.get("data"):
