@@ -349,6 +349,8 @@ class ChartManager {
         }
 
         const ctx = document.getElementById('dailyChart');
+        const dailyChartCard = document.getElementById('dailyChartCard');
+        if (dailyChartCard) dailyChartCard.classList.remove('hidden');
         this.dailyChart = new Chart(ctx, {
             type: 'line',
             data: {
