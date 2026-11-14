@@ -1361,14 +1361,8 @@ class DataManager {
             return { total: 0, details: {} };
         }
 
-        const tiers = [
-            { limit: 50, price: 1984 },
-            { limit: 50, price: 2050 },
-            { limit: 100, price: 2380 },
-            { limit: 100, price: 2998 },
-            { limit: 100, price: 3350 },
-            { limit: Infinity, price: 3460 }
-        ];
+        const tiers = this.getElectricityTiers(date);
+
 
         let totalCost = 0;
         let remainingKwh = kwh;
