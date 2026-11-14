@@ -15,14 +15,14 @@ except ImportError:
 # =================================================================
 # THÔNG TIN ĐĂNG NHẬP (Anh điền thông tin của anh vào đây)
 # =================================================================
-USERNAME = "0979542510"
-PASSWORD = "Quenmatroi@2412"
-CUSTOMER_ID = "PA01XT0004676" # Thường giống Username, VD: PA12...
+USERNAME = os.environ.get("EVN_USERNAME", "").strip()
+PASSWORD = os.environ.get("EVN_PASSWORD", "")
+CUSTOMER_ID = os.environ.get("EVN_CUSTOMER_ID", "").strip()  # Thường giống Username, VD: PA12...
 # =================================================================
 
 async def test_history():
-    if USERNAME == "MÃ_KHÁCH_HÀNG":
-        print("⚠️ Vui lòng mở file này lên và điền USERNAME/PASSWORD của anh vào trước khi chạy nhé!")
+    if not all((USERNAME, PASSWORD, CUSTOMER_ID)):
+        print("⚠️ Hãy đặt EVN_USERNAME, EVN_PASSWORD và EVN_CUSTOMER_ID trong biến môi trường trước khi chạy.")
         return
 
     # Khởi tạo API với đầy đủ tham số: hass, region, username, password, customer_id
