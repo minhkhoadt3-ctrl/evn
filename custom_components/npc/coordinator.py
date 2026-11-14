@@ -935,6 +935,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     date_text = str(value).strip()
                     if "đến" in date_text:
                         date_text = date_text.split("đến")[-1].strip()
+                    # API timestamps may be ISO-like (YYYY-MM-DDTHH:MM:SS).
+                    date_text = date_text.replace("T", " ").split()[0]
                     # Accept only explicit, parseable dates. _parse_date() has a
                     # "today" fallback, which is unsafe for validating API rows.
                     for date_format in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y%m%d", "%d%m%Y"):
