@@ -290,6 +290,8 @@ class UIManager {
     // Populate month select
     populateMonthSelect(uniqueMonths) {
         const monthSelect = document.getElementById('monthSelect');
+        if (!monthSelect) return;
+        const previousValue = monthSelect.value;
         monthSelect.innerHTML = '';
 
         uniqueMonths.forEach(monthYear => {
@@ -300,7 +302,9 @@ class UIManager {
         });
 
         if (uniqueMonths.length > 0) {
-            monthSelect.value = uniqueMonths[0];
+            monthSelect.value = uniqueMonths.includes(previousValue)
+                ? previousValue
+                : uniqueMonths[0];
         }
     }
 
