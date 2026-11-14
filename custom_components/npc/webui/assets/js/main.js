@@ -444,11 +444,14 @@ class ElectricityApp {
 
         // Hiển thị thông báo thành công
         this.uiManager.showToast(`Đã tìm thấy ${filteredData.length} ngày với tổng tiêu thụ ${totalConsumptionInRange.toFixed(2)} kWh`, 'success');
-        // Hiển thị lại dữ liệu gần đây sau khi tìm kiếm
-        const today = new Date();
-        const fiveDaysAgo = new Date(today);
-        fiveDaysAgo.setDate(today.getDate() - 5);
-        const recentDays = this.dataManager.getDataByDateRange(fiveDaysAgo, today);
+        // Hiển thị lại danh sách 5 ngày gần đây, kết thúc ở hôm qua.
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(23, 59, 59, 999);
+        const fiveDaysAgo = new Date(yesterday);
+        fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 4);
+        fiveDaysAgo.setHours(0, 0, 0, 0);
+        const recentDays = this.dataManager.getDataByDateRange(fiveDaysAgo, yesterday);
         this.uiManager.displayRecentDays(recentDays);
 
         // Reset button state
