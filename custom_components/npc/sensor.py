@@ -756,7 +756,10 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                         continue
                     try:
                         event_date = datetime.strptime(event["Ngày"], "%d-%m-%Y").date()
-                        if event_date > today_date:
+                        # Keep events scheduled for today in the upcoming list.
+                        # A date-only comparison using ">" incorrectly marked all
+                        # same-day outages as past events.
+                        if event_date >= today_date:
                             future_events.append(event)
                         else:
                             past_events.append(event)
