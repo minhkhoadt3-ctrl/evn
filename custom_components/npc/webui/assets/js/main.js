@@ -111,14 +111,22 @@ class ElectricityApp {
             ? monthSelectEl.value
             : uniqueMonths[0];
         if (monthSelectEl && initialMonth) monthSelectEl.value = initialMonth;
-        // Daily chart chỉ được tạo sau thao tác chủ động của người dùng.
-        // Không tự tải biểu đồ theo tháng mặc định khi mở trang.
 
-        // Hiển thị 5 ngày gần đây trong card tìm kiếm
-        const today = new Date();
-        const fiveDaysAgo = new Date(today);
-        fiveDaysAgo.setDate(today.getDate() - 5);
-        const recentDays = this.dataManager.getDataByDateRange(fiveDaysAgo, today);
+        // Mặc định tạo biểu đồ ngày theo tháng đang được chọn.
+        if (initialMonth) {
+            const initialDailyData = this.dataManager.getDataByMonth(initialMonth);
+            this.chartManager.createDailyChart(initialDailyData);
+        }
+
+        // Danh sách 5 ngày gần đây: từ hôm qua lùi về 4 ngày trước,
+        // không lấy dữ liệu của hôm nay (dữ liệu hôm nay có thể chưa hoàn chỉnh).
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(23, 59, 59, 999);
+        const fiveDaysAgo = new Date(yesterday);
+        fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 4);
+        fiveDaysAgo.setHours(0, 0, 0, 0);
+        const recentDays = this.dataManager.getDataByDateRange(fiveDaysAgo, yesterday);
         this.uiManager.displayRecentDays(recentDays);
 
         // --- Cấu phần cho Biểu đồ So sánh ---
@@ -337,30 +345,24 @@ class ElectricityApp {
         const startDate = document.getElementById('startDate');
         const endDate = document.getElementById('endDate');
         if (startDate && endDate) {
-            // Set default dates
-            const today = new Date();
-            const fiveDaysAgo = new Date(today);
-            fiveDaysAgo.setDate(today.getDate() - 5);
+            // Mặc định tìm kiếm 5 ngày kết thúc ở hôm qua, không gồm hôm nay.
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const fiveDaysAgo = new Date(yesterday);
+            fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 4);
+            const formatLocalDate = date => {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            };
 
-            endDate.value = today.toISOString().split('T')[0];
-            startDate.value = fiveDaysAgo.toISOString().split('T')[0];
+            endDate.value = formatLocalDate(yesterday);
+            startDate.value = formatLocalDate(fiveDaysAgo);
 
             // Add event listeners to save state on change
             startDate.addEventListener('change', () => this.saveUIState());
             endDate.addEventListener('change', () => this.saveUIState());
-
-            // Hiển thị dữ liệu 5 ngày gần đây khi trang được tải
-            setTimeout(() => {
-                if (this.dataManager && this.dataManager.dailyData && this.dataManager.dailyData.length > 0) {
-                    // Lấy dữ liệu 5 ngày gần đây
-                    const filteredData = this.dataManager.getDataByDateRange(fiveDaysAgo, today);
-
-                    if (filteredData.length > 0) {
-                        // Chỉ cập nhật danh sách 5 ngày gần đây, không tự tạo dailyChart.
-                        this.uiManager.displayRecentDays(filteredData);
-                    }
-                }
-            }, 1000); // Delay 1 second to ensure data is loaded
         }
 
         // Filter buttons
