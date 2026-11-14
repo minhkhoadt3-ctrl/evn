@@ -656,7 +656,7 @@ class DataManager {
         // Tính tiền từ sản lượng cho các kỳ không có tiền hóa đơn
         monthlyMap.forEach((entry, key) => {
             if (!costMap.has(key) && entry.consumption > 0) {
-                const calculatedCost = this.calculateElectricityCost(entry.consumption, new Date(year, month - 1, 1));
+                const calculatedCost = this.calculateElectricityCost(entry.consumption, new Date(entry.Năm, entry.Tháng - 1, 1));
                 costMap.set(key, calculatedCost);
                 console.log(`💰 Calculated cost for ${entry.Tháng}/${entry.Năm}: ${entry.consumption} kWh -> ${calculatedCost} VND`);
             }
