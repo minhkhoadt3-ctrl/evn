@@ -868,14 +868,15 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error(f"Error saving hóa đơn to monthly_bill: {e}", exc_info=True)
 
     async def _save_outage_data(self, data: list):
-        """Replace the customer's outage snapshot with the latest API response.
-        Chỉ update khi data thực sự thay đổi để tối ưu performance.
-        """
+        """Save a normalized outage snapshot without losing valid cached data."""
+        if not isinstance(data, list):
+            _LOGGER.warning("Ignoring invalid outage payload for %s: expected a list", self.customer_id)
+            return
+
         try:
             os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS power_outage_schedule (
                     userevn TEXT,
@@ -889,142 +890,122 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 )
             """)
 
-            # API response is a snapshot for the requested 30-day window.
-            # Check xem data mới có khác với data cũ không
-            # Nếu giống nhau thì skip DELETE/INSERT
-            
-            # Lấy data cũ
-            cursor.execute(
-                "SELECT ngay_bat_dau, thoi_gian_bat_dau, ngay_ket_thuc, thoi_gian_ket_thuc, ly_do, khu_vuc FROM power_outage_schedule WHERE userevn = ?",
-                (self.customer_id,)
-            )
-            old_data = set(cursor.fetchall())
-            
-            # Parse data mới
-            new_data = set()
-            for outage in (data or []):
-                try:
-                    ngay_bat_dau = outage.get("NGAY_BAT_DAU") or outage.get("ngay_bat_dau")
-                    ngay_ket_thuc = outage.get("NGAY_KET_THUC") or outage.get("ngay_ket_thuc")
-                    thoi_gian_bat_dau = outage.get("TGIAN_BDAU") or outage.get("thoi_gian_bat_dau") or outage.get("THOI_GIAN_BAT_DAU")
-                    thoi_gian_ket_thuc = outage.get("TGIAN_KTHUC") or outage.get("thoi_gian_ket_thuc") or outage.get("THOI_GIAN_KET_THUC")
-                    ly_do = outage.get("LY_DO") or outage.get("ly_do") or outage.get("LY_DO")
-                    khu_vuc = outage.get("KHUVUCMATDIEN") or outage.get("khu_vuc") or outage.get("KHU_VUC")
-                    
-                    if ngay_bat_dau and thoi_gian_bat_dau:
-                        new_data.add((ngay_bat_dau, thoi_gian_bat_dau, ngay_ket_thuc, thoi_gian_ket_thuc, ly_do, khu_vuc))
-                except Exception as e:
-                    _LOGGER.debug(f"Error parsing outage record: {e}")
+            # Normalize once and use the exact same rows for comparison and insertion.
+            normalized = {}
+            for outage in data:
+                if not isinstance(outage, dict):
                     continue
-            
-            # Nếu data giống nhau → skip
-            if old_data == new_data:
-                _LOGGER.info(f"Outage data unchanged for {self.customer_id}, skipping update")
+
+                start_raw = (
+                    outage.get("NGAY_BAT_DAU") or outage.get("ngay_bat_dau")
+                    or outage.get("NGAY") or outage.get("ngay")
+                    or outage.get("TGIAN_BDAU") or outage.get("tgian_bdau")
+                    or outage.get("THOI_DIEM") or outage.get("thoi_diem")
+                )
+                end_raw = (
+                    outage.get("NGAY_KET_THUC") or outage.get("ngay_ket_thuc")
+                    or outage.get("TGIAN_KTHUC") or outage.get("tgian_kthuc")
+                    or outage.get("NGAY") or outage.get("ngay")
+                )
+                start_time = (
+                    outage.get("THOI_GIAN_BAT_DAU") or outage.get("thoi_gian_bat_dau")
+                    or outage.get("THOI_GIAN") or outage.get("thoi_gian")
+                    or outage.get("THOI_DIEM_GIO") or outage.get("TGIAN_BDAU_GIO")
+                )
+                end_time = (
+                    outage.get("THOI_GIAN_KET_THUC") or outage.get("thoi_gian_ket_thuc")
+                    or outage.get("TGIAN_KTHUC_GIO")
+                )
+
+                # NPC often sends combined date/time values such as "15/09/2026 07:30".
+                if start_raw:
+                    parts = str(start_raw).strip().split(None, 1)
+                    start_raw = parts[0]
+                    if len(parts) > 1 and not start_time:
+                        start_time = parts[1].strip()
+                if end_raw:
+                    parts = str(end_raw).strip().split(None, 1)
+                    end_raw = parts[0]
+                    if len(parts) > 1 and not end_time:
+                        end_time = parts[1].strip()
+
+                start_date = self._parse_date({"NGAY": start_raw}) if start_raw else None
+                end_date = self._parse_date({"NGAY": end_raw}) if end_raw else None
+                if not start_date:
+                    _LOGGER.debug("Skipping outage record without a valid start date: %s", outage)
+                    continue
+
+                reason = (
+                    outage.get("LY_DO") or outage.get("ly_do")
+                    or outage.get("NOI_DUNG") or outage.get("noi_dung") or ""
+                )
+                area = (
+                    outage.get("KHU_VUC") or outage.get("khu_vuc")
+                    or outage.get("PHAM_VI") or outage.get("pham_vi")
+                    or outage.get("KHUVUCMATDIEN") or outage.get("khuvucmatdien") or ""
+                )
+                row = (
+                    start_date, end_date or start_date, str(start_time or ""),
+                    str(end_time or ""), str(reason), str(area)
+                )
+                normalized[(row[0], row[2])] = row
+
+            # An empty or wholly-unparseable response is ambiguous (API outage vs. no events).
+            # Retain the previous snapshot instead of accidentally deleting all known events.
+            if data and not normalized:
+                _LOGGER.warning(
+                    "No valid outage records could be parsed for %s; keeping cached schedule",
+                    self.customer_id,
+                )
                 conn.close()
                 return
-            
-            # Data khác nhau → DELETE và INSERT lại
-            _LOGGER.debug(f"Outage data changed for {self.customer_id}, updating (old={len(old_data)}, new={len(new_data)})")
+
+            cursor.execute(
+                "SELECT ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau, "
+                "thoi_gian_ket_thuc, ly_do, khu_vuc FROM power_outage_schedule WHERE userevn = ?",
+                (self.customer_id,),
+            )
+            old_rows = set(cursor.fetchall())
+            new_rows = set(normalized.values())
+
+            if not new_rows and old_rows:
+                _LOGGER.warning(
+                    "Outage API returned an empty schedule for %s; retaining %d cached records",
+                    self.customer_id, len(old_rows),
+                )
+                conn.close()
+                return
+
+            if old_rows == new_rows:
+                _LOGGER.debug("Outage schedule unchanged for %s", self.customer_id)
+                conn.close()
+                return
+
             cursor.execute(
                 "DELETE FROM power_outage_schedule WHERE userevn = ?",
                 (self.customer_id,),
             )
-
-            saved = 0
-            for outage in (data or []):
-                if not isinstance(outage, dict):
-                    continue
-
-                ngay_bat_dau = (
-                    outage.get("NGAY_BAT_DAU")
-                    or outage.get("ngay_bat_dau")
-                    or outage.get("NGAY")
-                    or outage.get("ngay")
-                )
-                ngay_ket_thuc = (
-                    outage.get("NGAY_KET_THUC")
-                    or outage.get("ngay_ket_thuc")
-                    or outage.get("NGAY")
-                    or outage.get("ngay")
-                )
-                thoi_gian_bat_dau = (
-                    outage.get("THOI_GIAN_BAT_DAU")
-                    or outage.get("thoi_gian_bat_dau")
-                    or outage.get("THOI_GIAN")
-                    or outage.get("thoi_gian")
-                    or outage.get("THOI_DIEM")
-                    or outage.get("thoi_diem")
-                    or ""
-                )
-                thoi_gian_ket_thuc = (
-                    outage.get("THOI_GIAN_KET_THUC")
-                    or outage.get("thoi_gian_ket_thuc")
-                    or ""
-                )
-                ly_do = (
-                    outage.get("LY_DO")
-                    or outage.get("ly_do")
-                    or outage.get("NOI_DUNG")
-                    or outage.get("noi_dung")
-                    or ""
-                )
-                khu_vuc = (
-                    outage.get("KHU_VUC")
-                    or outage.get("khu_vuc")
-                    or outage.get("PHAM_VI")
-                    or outage.get("pham_vi")
-                    or outage.get("KHUVUCMATDIEN")
-                    or outage.get("khuvucmatdien")
-                    or ""
-                )
-
-                # Defensive fallback for raw NPC responses: "15/09/2026 07:30".
-                if not ngay_bat_dau:
-                    raw_start = outage.get("TGIAN_BDAU") or outage.get("tgian_bdau")
-                    if raw_start:
-                        parts = str(raw_start).strip().split(None, 1)
-                        ngay_bat_dau = parts[0]
-                        if len(parts) == 2 and not thoi_gian_bat_dau:
-                            thoi_gian_bat_dau = parts[1].strip()
-                if not ngay_ket_thuc:
-                    raw_end = outage.get("TGIAN_KTHUC") or outage.get("tgian_kthuc")
-                    if raw_end:
-                        parts = str(raw_end).strip().split(None, 1)
-                        ngay_ket_thuc = parts[0]
-                        if len(parts) == 2 and not thoi_gian_ket_thuc:
-                            thoi_gian_ket_thuc = parts[1].strip()
-
-                if ngay_bat_dau:
-                    ngay_bat_dau = self._parse_date({"NGAY": ngay_bat_dau})
-                if ngay_ket_thuc:
-                    ngay_ket_thuc = self._parse_date({"NGAY": ngay_ket_thuc})
-
-                if not ngay_bat_dau:
-                    _LOGGER.debug(f"Skipping outage record without start date: {outage}")
-                    continue
-
-                cursor.execute("""
-                    INSERT OR REPLACE INTO power_outage_schedule
-                    (userevn, ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau,
-                     thoi_gian_ket_thuc, ly_do, khu_vuc)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    self.customer_id, ngay_bat_dau, ngay_ket_thuc,
-                    str(thoi_gian_bat_dau), str(thoi_gian_ket_thuc),
-                    str(ly_do), str(khu_vuc)
-                ))
-                saved += 1
-
-            conn.commit()
-            conn.close()
-            _LOGGER.debug(
-                f"Saved outage snapshot for {self.customer_id}: "
-                f"{saved}/{len(data or [])} records"
+            cursor.executemany(
+                """
+                INSERT OR REPLACE INTO power_outage_schedule
+                (userevn, ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau,
+                 thoi_gian_ket_thuc, ly_do, khu_vuc)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (self.customer_id, *row)
+                    for row in sorted(new_rows, key=lambda item: (item[0], item[2]))
+                ],
             )
+            conn.commit()
+            _LOGGER.info(
+                "Saved outage snapshot for %s: %d records",
+                self.customer_id, len(new_rows),
+            )
+            conn.close()
 
         except Exception as e:
-            _LOGGER.error(f"Error saving outage data: {e}", exc_info=True)
-
+            _LOGGER.error("Error saving outage data: %s", e, exc_info=True)
     def _parse_date(self, record: Dict) -> str:
         """Parse date from record to dd-mm-yyyy format."""
         # Try different date fields (priority order)
