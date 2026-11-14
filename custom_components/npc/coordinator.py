@@ -318,6 +318,15 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 PRIMARY KEY (userevn)
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS current_period (
+                userevn TEXT PRIMARY KEY,
+                tieu_thu REAL,
+                tien_dien INTEGER,
+                ngay_dau_ky TEXT,
+                ngay_cap_nhat TEXT
+            )
+        """)
         
         # Xóa các record rỗng trong daily_consumption (không có chi_so và dien_tieu_thu_kwh)
         cursor.execute("""
