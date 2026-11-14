@@ -93,9 +93,15 @@ class ElectricityApp {
             (evt, elements) => this.handleMonthlyChartClick(evt, elements)
         );
 
-        // Tạo biểu đồ daily ban đầu
-        const initialMonth = uniqueMonths[0];
-        const initialDailyData = this.dataManager.getDataByMonth(initialMonth);
+        // Giữ tháng đang chọn; chỉ dùng tháng mới nhất khi lựa chọn cũ không còn hợp lệ.
+        const monthSelectEl = document.getElementById('monthSelect');
+        const initialMonth = monthSelectEl?.value && uniqueMonths.includes(monthSelectEl.value)
+            ? monthSelectEl.value
+            : uniqueMonths[0];
+        if (monthSelectEl && initialMonth) monthSelectEl.value = initialMonth;
+        const initialDailyData = initialMonth
+            ? this.dataManager.getDataByMonth(initialMonth)
+            : [];
         this.chartManager.createDailyChart(initialDailyData);
 
         // Hiển thị 5 ngày gần đây trong card tìm kiếm
@@ -110,20 +116,29 @@ class ElectricityApp {
         const compareYear1 = document.getElementById('compareYear1');
         const compareYear2 = document.getElementById('compareYear2');
 
-        // Populate compare account selector if needed
+        // Populate compare account selector if needed, then restore the saved choice.
         if (compareAccountSelect && compareAccountSelect.options.length <= 2) {
             const accounts = this.dataManager.accounts || [];
             accounts.forEach(acc => {
                 if (acc.userevn !== 'all') {
-                    const option = new Option(acc.userevn, acc.userevn);
-                    compareAccountSelect.add(option);
+                    compareAccountSelect.add(new Option(acc.userevn, acc.userevn));
                 }
             });
         }
+        let savedUiState = {};
+        try {
+            savedUiState = JSON.parse(localStorage.getItem('uiState') || '{}');
+        } catch (e) {
+            console.warn('Không đọc được trạng thái giao diện đã lưu:', e);
+        }
+        if (compareAccountSelect && savedUiState.compareAccount &&
+            Array.from(compareAccountSelect.options).some(o => o.value === savedUiState.compareAccount)) {
+            compareAccountSelect.value = savedUiState.compareAccount;
+        }
 
         if (compareYear1 && compareYear2 && availableYears.length > 0) {
-            const val1 = compareYear1.value;
-            const val2 = compareYear2.value;
+            const val1 = savedUiState.compareYear1 || compareYear1.value;
+            const val2 = savedUiState.compareYear2 || compareYear2.value;
             // isFirstPopulate: compareYear2 chỉ có 1 option duy nhất (option "all" từ HTML)
             // → chưa được populate → không "preserve" val2 === 'all'
             const isFirstPopulate = compareYear2.options.length <= 1;
@@ -226,16 +241,8 @@ class ElectricityApp {
     }
 
     setupEventListeners() {
-        // Resize listener
-        window.addEventListener('resize', () => {
-            if (this.dataManager.currentAccount) {
-                clearTimeout(this.resizeTimeout);
-                this.resizeTimeout = setTimeout(() => {
-                    console.log('Window resized, refreshing charts...');
-                    this.processAndDisplayData();
-                }, 250);
-            }
-        });
+        // Chart.js đã bật responsive; không dựng lại toàn bộ dữ liệu khi xoay màn hình.
+        // Việc gọi processAndDisplayData() tại đây làm mất lựa chọn tháng và tạo lại dailyChart.
 
         // Account select change
         const accountSelect = document.getElementById('accountSelect');
@@ -252,13 +259,22 @@ class ElectricityApp {
         const compareYear2 = document.getElementById('compareYear2');
 
         if (compareAccountSelect) {
-            compareAccountSelect.addEventListener('change', () => this.updateComparisonChart());
+            compareAccountSelect.addEventListener('change', () => {
+                this.saveUIState();
+                this.updateComparisonChart();
+            });
         }
         if (compareYear1) {
-            compareYear1.addEventListener('change', () => this.updateComparisonChart());
+            compareYear1.addEventListener('change', () => {
+                this.saveUIState();
+                this.updateComparisonChart();
+            });
         }
         if (compareYear2) {
-            compareYear2.addEventListener('change', () => this.updateComparisonChart());
+            compareYear2.addEventListener('change', () => {
+                this.saveUIState();
+                this.updateComparisonChart();
+            });
         }
 
         // Comparison Chart Controls
@@ -808,6 +824,9 @@ class ElectricityApp {
             selectedAccount: accountSelect?.value || '',
             selectedMonth: monthSelect?.value || '',
             selectedYear: yearSelect?.value || 'all',
+            compareAccount: document.getElementById('compareAccountSelect')?.value || 'all',
+            compareYear1: document.getElementById('compareYear1')?.value || '',
+            compareYear2: document.getElementById('compareYear2')?.value || 'all',
             startDate: startDate?.value || '',
             endDate: endDate?.value || ''
         };
@@ -844,6 +863,13 @@ class ElectricityApp {
             const monthSelect = document.getElementById('monthSelect');
             if (monthSelect && state.selectedMonth) {
                 monthSelect.value = state.selectedMonth;
+            }
+
+            // Restore comparison selectors when their options are already available.
+            const compareAccountSelect = document.getElementById('compareAccountSelect');
+            if (compareAccountSelect && state.compareAccount &&
+                Array.from(compareAccountSelect.options).some(o => o.value === state.compareAccount)) {
+                compareAccountSelect.value = state.compareAccount;
             }
 
             // Restore date inputs
