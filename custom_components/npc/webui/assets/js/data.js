@@ -470,10 +470,19 @@ class DataManager {
     }
 
     // Tính tiền điện từ kWh theo công thức bậc thang EVN
-    calculateElectricityCost(kwh) {
-        if (!kwh || kwh <= 0) return 0;
-
-        const tiers = [
+    getElectricityTiers(date = new Date()) {
+        const effectiveDate = new Date(2026, 10, 1);
+        const tariffDate = date instanceof Date ? date : new Date(date);
+        if (!Number.isNaN(tariffDate.getTime()) && tariffDate >= effectiveDate) {
+            return [
+                { limit: 100, price: 1901 },
+                { limit: 100, price: 2289 },
+                { limit: 200, price: 2894 },
+                { limit: 300, price: 3456 },
+                { limit: Infinity, price: 3844 }
+            ];
+        }
+        return [
             { limit: 50, price: 1984 },
             { limit: 50, price: 2050 },
             { limit: 100, price: 2380 },
@@ -481,6 +490,12 @@ class DataManager {
             { limit: 100, price: 3350 },
             { limit: Infinity, price: 3460 }
         ];
+    }
+
+    calculateElectricityCost(kwh, date = new Date()) {
+        if (!kwh || kwh <= 0) return 0;
+
+        const tiers = this.getElectricityTiers(date);
 
         let totalCost = 0;
         let remainingKwh = kwh;
@@ -641,7 +656,7 @@ class DataManager {
         // Tính tiền từ sản lượng cho các kỳ không có tiền hóa đơn
         monthlyMap.forEach((entry, key) => {
             if (!costMap.has(key) && entry.consumption > 0) {
-                const calculatedCost = this.calculateElectricityCost(entry.consumption);
+                const calculatedCost = this.calculateElectricityCost(entry.consumption, new Date(year, month - 1, 1));
                 costMap.set(key, calculatedCost);
                 console.log(`💰 Calculated cost for ${entry.Tháng}/${entry.Năm}: ${entry.consumption} kWh -> ${calculatedCost} VND`);
             }
@@ -1282,7 +1297,7 @@ class DataManager {
                 monthlyCost = parseInt(costDataItem["Tiền Điện"] || 0);
             } else {
                 if (totalConsumption > 0) {
-                    const costCalculation = this.tinhTienDien(totalConsumption);
+                    const costCalculation = this.tinhTienDien(totalConsumption, this.buildBillingPeriodRange(monthNum, targetYear, billingCycle).end);
                     monthlyCost = costCalculation.total;
                 } else {
                     monthlyCost = 0;
@@ -1341,7 +1356,7 @@ class DataManager {
     }
 
     // Tính tiền điện theo bậc thang (từ NPC utils.py)
-    tinhTienDien(kwh) {
+    tinhTienDien(kwh, date = new Date()) {
         if (!kwh || kwh <= 0) {
             return { total: 0, details: {} };
         }
