@@ -256,7 +256,7 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                 try:
                     tieu_thu = float(tieu_thu_state.state)
                     if tieu_thu > 0:
-                        tongtien, chi_tiet = tinhtiendien(tieu_thu)
+                        tongtien, chi_tiet = tinhtiendien(tieu_thu, today)
                         self._attributes = {
                             "Tiêu thụ": tieu_thu,
                             "Chi tiết": chi_tiet
@@ -295,7 +295,7 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             if chi_so_tam_chot is not None and chi_so_cuoi_ky is not None:
                 if chi_so_tam_chot > 0 and chi_so_cuoi_ky > 0 and chi_so_tam_chot > chi_so_cuoi_ky:
                     tieu_thu = chi_so_tam_chot - chi_so_cuoi_ky
-                    tongtien, chi_tiet = tinhtiendien(tieu_thu)
+                    tongtien, chi_tiet = tinhtiendien(tieu_thu, today)
                     self._attributes = {
                         "Tiêu thụ": tieu_thu,
                         "Chi tiết": chi_tiet,
@@ -593,7 +593,7 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                 # Tính sản lượng nếu có đủ dữ liệu
                 if chi_so_prev is not None and chi_so_prev_prev is not None and chi_so_prev > chi_so_prev_prev:
                     tieu_thu = chi_so_prev - chi_so_prev_prev
-                    tien, tien_details = tinhtiendien(tieu_thu)
+                    tien, tien_details = tinhtiendien(tieu_thu, end_prev)
                     _LOGGER.debug(f"Tính tien_dien_ky_truoc theo công thức: {tieu_thu} kWh => {tien} VNĐ")
                     self._attributes.update({
                         "Tính theo công thức": True,
@@ -660,7 +660,7 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             # Tính tiêu thụ và tiền điện kỳ trước nữa
             if chi_so_dau_prev_prev is not None and chi_so_cuoi_prev_prev is not None and chi_so_cuoi_prev_prev > chi_so_dau_prev_prev:
                 tieu_thu = chi_so_cuoi_prev_prev - chi_so_dau_prev_prev
-                tien, tien_details = tinhtiendien(tieu_thu)
+                tien, tien_details = tinhtiendien(tieu_thu, prev_end_ky_prev)
                 self._attributes = {
                     "Tính theo công thức": True,
                     "Tiêu thụ": round(tieu_thu, 2),

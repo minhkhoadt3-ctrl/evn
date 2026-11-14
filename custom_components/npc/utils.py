@@ -84,13 +84,47 @@ def tinhngaydauky(ngaydauky: int, today: Optional[datetime] = None):
     return start, end, end_ky, prev_end_ky
 
 
-def tinhtiendien(kwh):
+def _get_bieu_gia_dien(ngay_tinh=None):
+    """Chọn biểu giá theo ngày áp dụng; giữ nguyên biểu giá cũ cho dữ liệu trước 01/11/2026."""
+    if ngay_tinh is None:
+        ngay_tinh = datetime.now().date()
+    elif isinstance(ngay_tinh, datetime):
+        ngay_tinh = ngay_tinh.date()
+    elif isinstance(ngay_tinh, str):
+        parsed = None
+        for date_format in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+            try:
+                parsed = datetime.strptime(ngay_tinh.strip(), date_format).date()
+                break
+            except ValueError:
+                continue
+        ngay_tinh = parsed or datetime.now().date()
+
+    if ngay_tinh >= datetime(2026, 11, 1).date():
+        # Biểu giá 5 bậc mới, giá chưa VAT (đồng/kWh).
+        return [
+            {"limit": 100, "price": 1901},
+            {"limit": 100, "price": 2289},
+            {"limit": 200, "price": 2894},
+            {"limit": 300, "price": 3456},
+            {"limit": float("inf"), "price": 3844},
+        ]
+
+    # Biểu giá 6 bậc cũ, giá chưa VAT (đồng/kWh).
+    return [
+        {"limit": 50, "price": 1984},
+        {"limit": 50, "price": 2050},
+        {"limit": 100, "price": 2380},
+        {"limit": 100, "price": 2998},
+        {"limit": 100, "price": 3350},
+        {"limit": float("inf"), "price": 3460},
+    ]
+
+
+def tinhtiendien(kwh, ngay_tinh=None):
     if kwh is None or kwh <= 0:
         return None, {}
-    tiers = [
-        {"limit": 50, "price": 1984}, {"limit": 50, "price": 2050}, {"limit": 100, "price": 2380},
-        {"limit": 100, "price": 2998}, {"limit": 100, "price": 3350}, {"limit": float("inf"), "price": 3460}
-    ]
+    tiers = _get_bieu_gia_dien(ngay_tinh)
     total_cost = 0
     remaining_kwh = kwh
     tier_details = []
@@ -104,7 +138,14 @@ def tinhtiendien(kwh):
             break
     tax = total_cost * 0.08
     total_with_tax = total_cost + tax
-    return total_with_tax, {"Tiền trước thuế": total_cost, "Thuế 8%": tax, "Chi tiết bậc thang": tier_details}
+    return total_with_tax, {
+        "Tiền trước thuế": total_cost,
+        "Thuế 8%": tax,
+        "Thuế suất": "8%",
+        "Ngày áp dụng biểu giá": (ngay_tinh.isoformat() if hasattr(ngay_tinh, "isoformat") else ngay_tinh) if ngay_tinh else datetime.now().date().isoformat(),
+        "Số bậc": len(tiers),
+        "Chi tiết bậc thang": tier_details,
+    }
 
 
 def chuyen_doi_so(value):

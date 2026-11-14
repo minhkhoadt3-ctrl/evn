@@ -657,7 +657,7 @@ class ElectricityApp {
 
     // Hàm tính toán tiền điện theo bậc thang tích lũy đúng cách
     calculateDailyCostWithTiers(sortedData) {
-        const tiers = [
+        const oldTiers = [
             { limit: 50, price: 1984 },
             { limit: 50, price: 2050 },
             { limit: 100, price: 2380 },
@@ -665,8 +665,18 @@ class ElectricityApp {
             { limit: 100, price: 3350 },
             { limit: Infinity, price: 3460 }
         ];
+        const newTiers = [
+            { limit: 100, price: 1901 },
+            { limit: 100, price: 2289 },
+            { limit: 200, price: 2894 },
+            { limit: 300, price: 3456 },
+            { limit: Infinity, price: 3844 }
+        ];
 
-        let cumulativeKwh = 0;
+        // Mỗi biểu giá có bộ sản lượng tích lũy riêng. Khi qua 01/11/2026,
+        // bậc thang mới bắt đầu tính riêng, không gộp kWh của biểu giá cũ.
+        let oldTariffKwh = 0;
+        let newTariffKwh = 0;
         let previousTotalCost = 0;
 
         // Tính max/min để highlight
@@ -676,10 +686,18 @@ class ElectricityApp {
 
         return sortedData.map(day => {
             const kwh = day["Điện tiêu thụ (kWh)"];
-            cumulativeKwh += kwh;
+            const dateParts = String(day.Ngày || "").split("-").map(Number);
+            const dayDate = dateParts.length === 3
+                ? new Date(dateParts[2], dateParts[1] - 1, dateParts[0])
+                : new Date();
+            if (dayDate >= new Date(2026, 10, 1)) newTariffKwh += kwh;
+            else oldTariffKwh += kwh;
 
-            // Tính tổng tiền từ đầu chu kỳ đến ngày hiện tại
-            const currentTotalCost = this.calculateCostFromTiers(cumulativeKwh, tiers);
+            // Tổng tiền gồm phần kWh trước và từ ngày hiệu lực, mỗi phần
+            // được tính theo đúng biểu giá và bậc thang tương ứng.
+            const currentTotalCost =
+                this.calculateCostFromTiers(oldTariffKwh, oldTiers) +
+                this.calculateCostFromTiers(newTariffKwh, newTiers);
 
             // Tiền điện của ngày hiện tại = tổng tiền hiện tại - tổng tiền ngày trước
             const dailyCost = currentTotalCost - previousTotalCost;
@@ -694,7 +712,7 @@ class ElectricityApp {
                 kwh: kwh,
                 dailyCost: Math.round(dailyCost),
                 avgTierPrice: avgTierPrice,
-                cumulativeKwh: cumulativeKwh,
+                cumulativeKwh: oldTariffKwh + newTariffKwh,
                 isMax: kwh === max,
                 isMin: kwh === min
             };

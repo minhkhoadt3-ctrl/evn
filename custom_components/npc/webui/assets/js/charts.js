@@ -74,14 +74,23 @@ class ChartManager {
             let finalCost = cost;
             if (cost === 0 && consumption > 0) {
                 // Tính tiền từ công thức bậc thang EVN
-                const tiers = [
-                    { limit: 50, price: 1984 },
-                    { limit: 50, price: 2050 },
-                    { limit: 100, price: 2380 },
-                    { limit: 100, price: 2998 },
-                    { limit: 100, price: 3350 },
-                    { limit: Infinity, price: 3460 }
-                ];
+                const tariffDate = new Date(item.Năm || new Date().getFullYear(), (item.Tháng || 1) - 1, 1);
+                const tiers = tariffDate >= new Date(2026, 10, 1)
+                    ? [
+                        { limit: 100, price: 1901 },
+                        { limit: 100, price: 2289 },
+                        { limit: 200, price: 2894 },
+                        { limit: 300, price: 3456 },
+                        { limit: Infinity, price: 3844 }
+                    ]
+                    : [
+                        { limit: 50, price: 1984 },
+                        { limit: 50, price: 2050 },
+                        { limit: 100, price: 2380 },
+                        { limit: 100, price: 2998 },
+                        { limit: 100, price: 3350 },
+                        { limit: Infinity, price: 3460 }
+                    ];
 
                 let totalCost = 0;
                 let remainingKwh = consumption;
