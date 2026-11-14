@@ -111,10 +111,8 @@ class ElectricityApp {
             ? monthSelectEl.value
             : uniqueMonths[0];
         if (monthSelectEl && initialMonth) monthSelectEl.value = initialMonth;
-        const initialDailyData = initialMonth
-            ? this.dataManager.getDataByMonth(initialMonth)
-            : [];
-        this.chartManager.createDailyChart(initialDailyData);
+        // Daily chart chỉ được tạo sau thao tác chủ động của người dùng.
+        // Không tự tải biểu đồ theo tháng mặc định khi mở trang.
 
         // Hiển thị 5 ngày gần đây trong card tìm kiếm
         const today = new Date();
@@ -358,10 +356,7 @@ class ElectricityApp {
                     const filteredData = this.dataManager.getDataByDateRange(fiveDaysAgo, today);
 
                     if (filteredData.length > 0) {
-                        // Cập nhật biểu đồ
-                        this.chartManager.createDailyChart(filteredData);
-
-                        // Hiển thị dữ liệu trong card tìm kiếm
+                        // Chỉ cập nhật danh sách 5 ngày gần đây, không tự tạo dailyChart.
                         this.uiManager.displayRecentDays(filteredData);
                     }
                 }
