@@ -929,8 +929,23 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     if len(parts) > 1 and not end_time:
                         end_time = parts[1].strip()
 
-                start_date = self._parse_date({"NGAY": start_raw}) if start_raw else None
-                end_date = self._parse_date({"NGAY": end_raw}) if end_raw else None
+                def parse_outage_date(value):
+                    if not value:
+                        return None
+                    date_text = str(value).strip()
+                    if "đến" in date_text:
+                        date_text = date_text.split("đến")[-1].strip()
+                    # Accept only explicit, parseable dates. _parse_date() has a
+                    # "today" fallback, which is unsafe for validating API rows.
+                    for date_format in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y%m%d", "%d%m%Y"):
+                        try:
+                            return datetime.strptime(date_text, date_format).strftime("%d-%m-%Y")
+                        except ValueError:
+                            continue
+                    return None
+
+                start_date = parse_outage_date(start_raw)
+                end_date = parse_outage_date(end_raw)
                 if not start_date:
                     _LOGGER.debug("Skipping outage record without a valid start date: %s", outage)
                     continue
