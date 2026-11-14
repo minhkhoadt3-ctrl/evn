@@ -103,19 +103,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Close API session
-    if entry.entry_id in hass.data.get(DOMAIN, {}):
-        api = hass.data[DOMAIN][entry.entry_id].get("api")
+    # Unload every platform that was forwarded during setup.
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "button"])
+    if not unload_ok:
+        return False
+
+    # Close the API session only after platforms have unloaded successfully.
+    entry_data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    if entry_data:
+        api = entry_data.get("api")
         if api:
             await api.close()
 
-    # Unload sensor platform
-    unload_ok = await hass.config_entries.async_forward_entry_unload(entry, "sensor")
-    
-    if unload_ok and entry.entry_id in hass.data.get(DOMAIN, {}):
-        hass.data[DOMAIN].pop(entry.entry_id)
-
-    return unload_ok
+    return True
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
