@@ -57,16 +57,34 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     f"{outage_from} -> {outage_to}"
                 )
                 outage_data = await self.api.get_ngungcapdien(outage_from, outage_to)
-                if outage_data is not None and isinstance(outage_data.get("data"), list):
-                    await self._save_outage_data(outage_data["data"])
+                # The API client normally wraps records in {"data": [...]}; accept
+                # a raw list as well so a regional API response is not discarded.
+                if isinstance(outage_data, list):
+                    outage_records = outage_data
+                elif isinstance(outage_data, dict) and isinstance(outage_data.get("data"), list):
+                    outage_records = outage_data["data"]
+                else:
+                    outage_records = None
+
+                if outage_records is not None:
+                    await self._save_outage_data(outage_records)
                     _LOGGER.info(
-                        f"Power outage sync completed for {self.customer_id}: "
-                        f"{len(outage_data['data'])} records"
+                        "Power outage sync completed for %s: %d records",
+                        self.customer_id, len(outage_records),
+                    )
+                elif outage_data is None:
+                    # None means request/login/HTTP/JSON failure in EVNAPI.
+                    # Do not pass it to the snapshot writer: cached schedules stay intact.
+                    _LOGGER.warning(
+                        "Power outage API request returned no response for %s; "
+                        "keeping the previously cached schedule",
+                        self.customer_id,
                     )
                 else:
                     _LOGGER.warning(
-                        f"Power outage API returned no usable data for {self.customer_id}: "
-                        f"{outage_data!r}"
+                        "Power outage API returned an unsupported payload for %s: %r; "
+                        "keeping the previously cached schedule",
+                        self.customer_id, outage_data,
                     )
             except Exception as outage_err:
                 # Do not let outage API problems prevent the rest of EVN data from updating.
@@ -111,13 +129,23 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # EVN API chỉ trả 3 tháng gần nhất, nên luôn gọi API mỗi lần sync
             _LOGGER.info(f"Fetching bill data for {self.customer_id}")
             bill_data = await self.api.get_hoadon()
-            if bill_data and bill_data.get("data"):
-                _LOGGER.info(f"Bill data received: {len(bill_data.get('data', []))} records")
-                await self._save_bill_data(bill_data["data"])
-                await self._save_hoadon_to_monthly_bill(bill_data["data"])
-                _LOGGER.info(f"Bill data sync completed for {self.customer_id}")
+            bill_records = bill_data.get("data") if isinstance(bill_data, dict) else None
+            if isinstance(bill_records, list) and bill_records:
+                _LOGGER.info("Bill data received for %s: %d records", self.customer_id, len(bill_records))
+                await self._save_bill_data(bill_records)
+                await self._save_hoadon_to_monthly_bill(bill_records)
+                _LOGGER.info("Bill data sync completed for %s", self.customer_id)
+            elif isinstance(bill_records, list):
+                # An empty list is a valid "no bill available" result for some accounts.
+                # This is not an integration failure and should not generate warning spam.
+                _LOGGER.debug("No bill records currently available for %s", self.customer_id)
             else:
-                _LOGGER.warning(f"No bill data received for {self.customer_id}")
+                # None/invalid payload is different from a valid empty bill list.
+                # Keep existing bill data and report the failed fetch for diagnostics.
+                _LOGGER.warning(
+                    "Bill API returned no usable response for %s; existing bill data was retained",
+                    self.customer_id,
+                )
 
             # Use executor to check missing data
             missing_periods = await self.hass.async_add_executor_job(self._get_missing_monthly_periods)
