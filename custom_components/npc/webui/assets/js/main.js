@@ -62,6 +62,13 @@ class ElectricityApp {
             this.uiManager.showLoader(false);
         }
     } processAndDisplayData() {
+        let savedUiState = {};
+        try {
+            savedUiState = JSON.parse(localStorage.getItem('uiState') || '{}');
+        } catch (e) {
+            console.warn('Không đọc được trạng thái giao diện đã lưu:', e);
+        }
+
         // Lấy tất cả các năm có sẵn trong dữ liệu
         const availableYears = this.dataManager.getAvailableYears();
         this.uiManager.populateYearSelect(availableYears);
@@ -75,6 +82,11 @@ class ElectricityApp {
         // Cập nhật dropdown tháng (đã lọc theo năm nếu có)
         const uniqueMonths = this.dataManager.getUniqueMonths(this.currentYear);
         this.uiManager.populateMonthSelect(uniqueMonths);
+        const monthSelectForRestore = document.getElementById('monthSelect');
+        if (monthSelectForRestore && savedUiState.selectedMonth &&
+            uniqueMonths.includes(savedUiState.selectedMonth)) {
+            monthSelectForRestore.value = savedUiState.selectedMonth;
+        }
 
         // Tính toán và hiển thị summary (đã lọc theo năm)
         const summary = this.dataManager.calculateSummary(this.currentYear);
@@ -125,12 +137,6 @@ class ElectricityApp {
                 }
             });
         }
-        let savedUiState = {};
-        try {
-            savedUiState = JSON.parse(localStorage.getItem('uiState') || '{}');
-        } catch (e) {
-            console.warn('Không đọc được trạng thái giao diện đã lưu:', e);
-        }
         if (compareAccountSelect && savedUiState.compareAccount &&
             Array.from(compareAccountSelect.options).some(o => o.value === savedUiState.compareAccount)) {
             compareAccountSelect.value = savedUiState.compareAccount;
@@ -161,7 +167,7 @@ class ElectricityApp {
 
             // Restore year2 selection
             // Chỉ giữ 'all' nếu user đã chọn thủ công (không phải lần đầu load)
-            if (!isFirstPopulate && val2 === 'all') {
+            if (val2 === 'all' && (savedUiState.compareYear2 === 'all' || !isFirstPopulate)) {
                 compareYear2.value = 'all';
             } else if (val2 && val2 !== 'all' && availableYears.includes(parseInt(val2))) {
                 compareYear2.value = val2;
