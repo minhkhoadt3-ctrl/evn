@@ -21,7 +21,6 @@
     <link rel="stylesheet" href="assets/css/responsive-improvements.css">
 
     <!-- PWA Support -->
-    <link rel="manifest" href="manifest.webmanifest">
     <meta name="theme-color" content="#e961ab">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -153,7 +152,7 @@
             </div>
 
             <!-- Daily Chart Card -->
-            <div class="card p-3 col-span-1 md:col-span-2">
+            <div id="dailyChartCard" class="card p-3 col-span-1 md:col-span-2 hidden">
                 <h3 class="text-base font-semibold mb-2">Tiêu Thụ Hàng Ngày</h3>
                 <div class="chart-container daily-chart">
                     <canvas id="dailyChart"></canvas>
