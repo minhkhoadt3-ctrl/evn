@@ -784,6 +784,9 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                         "Thời gian đến": earliest_event["Thời gian đến"],
                         "Khu vực": earliest_event["Khu vực"],
                         "Lý do": earliest_event["Lý do"],
+                        "Địa chỉ": earliest_event.get("Địa chỉ", ""),
+                        "TTHAI_HOAN": earliest_event.get("TTHAI_HOAN", ""),
+                        "Trạng thái": earliest_event.get("Trạng thái", ""),
                     })
                     return (
                         f"Có ({earliest_event['Ngày']} "

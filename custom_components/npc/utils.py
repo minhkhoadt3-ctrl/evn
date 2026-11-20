@@ -354,6 +354,16 @@ def layhoadon(userevn, year):
     return rows
 
 
+def _trang_thai_hoan(value):
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return "Không rõ"
+    try:
+        return "Đang thực hiện" if float(text) == 0 else "Bị hoãn"
+    except (TypeError, ValueError):
+        return "Bị hoãn"
+
+
 def laylichcatdien(userevn):
     try:
         conn = get_db_conn()
@@ -361,7 +371,8 @@ def laylichcatdien(userevn):
         cursor.execute(
             """
             SELECT ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau,
-                   thoi_gian_ket_thuc, ly_do, khu_vuc
+                   thoi_gian_ket_thuc, ly_do, khu_vuc,
+                   ten_phan_tu, tthai_hoan
             FROM power_outage_schedule
             WHERE userevn=?
             ORDER BY ngay_bat_dau DESC
@@ -378,7 +389,10 @@ def laylichcatdien(userevn):
                     "Thời gian từ": str(row[2]),
                     "Thời gian đến": str(row[3]),
                     "Lý do": str(row[4]),
-                    "Khu vực": str(row[5])
+                    "Khu vực": str(row[5]),
+                    "Địa chỉ": str(row[6]) if row[6] is not None else "",
+                    "TTHAI_HOAN": str(row[7]) if row[7] is not None else "",
+                    "Trạng thái": _trang_thai_hoan(row[7])
                 })
         return result
     except Exception:

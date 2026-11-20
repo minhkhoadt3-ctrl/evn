@@ -332,14 +332,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 PRIMARY KEY (userevn, ngay)
             )
         """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS power_outage_schedule (
-                userevn TEXT, ngay_bat_dau TEXT, ngay_ket_thuc TEXT,
-                thoi_gian_bat_dau TEXT, thoi_gian_ket_thuc TEXT,
-                ly_do TEXT, khu_vuc TEXT,
-                PRIMARY KEY (userevn, ngay_bat_dau, thoi_gian_bat_dau)
-            )
-        """)
+        self._ensure_outage_schedule_schema(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS tien_no_evn (
                 userevn TEXT, tien_no REAL, ngay_cap_nhat TEXT,
@@ -367,6 +360,25 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         
         conn.commit()
         conn.close()
+
+    def _ensure_outage_schedule_schema(self, cursor):
+        """Create or migrate the power outage schedule table."""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS power_outage_schedule (
+                userevn TEXT, ngay_bat_dau TEXT, ngay_ket_thuc TEXT,
+                thoi_gian_bat_dau TEXT, thoi_gian_ket_thuc TEXT,
+                ly_do TEXT, khu_vuc TEXT,
+                ten_phan_tu TEXT, tthai_hoan TEXT,
+                PRIMARY KEY (userevn, ngay_bat_dau, thoi_gian_bat_dau)
+            )
+        """)
+        cursor.execute("PRAGMA table_info(power_outage_schedule)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        for column in ("ten_phan_tu", "tthai_hoan"):
+            if column not in existing_columns:
+                cursor.execute(
+                    f"ALTER TABLE power_outage_schedule ADD COLUMN {column} TEXT"
+                )
 
     def _cleanup_history_retention(self):
         """Keep only records from 2025 onward."""
@@ -905,18 +917,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS power_outage_schedule (
-                    userevn TEXT,
-                    ngay_bat_dau TEXT,
-                    ngay_ket_thuc TEXT,
-                    thoi_gian_bat_dau TEXT,
-                    thoi_gian_ket_thuc TEXT,
-                    ly_do TEXT,
-                    khu_vuc TEXT,
-                    PRIMARY KEY (userevn, ngay_bat_dau, thoi_gian_bat_dau)
-                )
-            """)
+            self._ensure_outage_schedule_schema(cursor)
+
+            def first_present(*values):
+                for value in values:
+                    if value is not None:
+                        return value
+                return ""
 
             # Normalize once and use the exact same rows for comparison and insertion.
             normalized = {}
@@ -989,9 +996,19 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     or outage.get("PHAM_VI") or outage.get("pham_vi")
                     or outage.get("KHUVUCMATDIEN") or outage.get("khuvucmatdien") or ""
                 )
+                ten_phan_tu = first_present(
+                    outage.get("TENPHANTU"), outage.get("ten_phan_tu"),
+                    outage.get("TEN_PHAN_TU"), outage.get("PHAN_TU")
+                )
+                tthai_hoan = first_present(
+                    outage.get("TTHAI_HOAN"), outage.get("tthai_hoan"),
+                    outage.get("TTHAIHOAN"), outage.get("TRANG_THAI_HOAN"),
+                    outage.get("trang_thai_hoan")
+                )
                 row = (
                     start_date, end_date or start_date, str(start_time or ""),
-                    str(end_time or ""), str(reason), str(area)
+                    str(end_time or ""), str(reason), str(area),
+                    str(ten_phan_tu), str(tthai_hoan)
                 )
                 normalized[(row[0], row[2])] = row
 
@@ -1007,7 +1024,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             cursor.execute(
                 "SELECT ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau, "
-                "thoi_gian_ket_thuc, ly_do, khu_vuc FROM power_outage_schedule WHERE userevn = ?",
+                "thoi_gian_ket_thuc, ly_do, khu_vuc, ten_phan_tu, tthai_hoan "
+                "FROM power_outage_schedule WHERE userevn = ?",
                 (self.customer_id,),
             )
             old_rows = set(cursor.fetchall())
@@ -1034,8 +1052,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 """
                 INSERT OR REPLACE INTO power_outage_schedule
                 (userevn, ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau,
-                 thoi_gian_ket_thuc, ly_do, khu_vuc)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                 thoi_gian_ket_thuc, ly_do, khu_vuc, ten_phan_tu, tthai_hoan)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (self.customer_id, *row)
