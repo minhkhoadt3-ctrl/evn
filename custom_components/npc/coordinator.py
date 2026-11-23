@@ -374,12 +374,16 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             )
         """)
         cursor.execute("PRAGMA table_info(power_outage_schedule)")
-        existing_columns = {row[1] for row in cursor.fetchall()}
+        existing_columns = {str(row[1]).lower() for row in cursor.fetchall()}
         for column in ("ten_phan_tu", "tthai_hoan", "trang_thai"):
             if column not in existing_columns:
-                cursor.execute(
-                    f"ALTER TABLE power_outage_schedule ADD COLUMN {column} TEXT"
-                )
+                try:
+                    cursor.execute(
+                        f"ALTER TABLE power_outage_schedule ADD COLUMN {column} TEXT"
+                    )
+                except sqlite3.OperationalError as err:
+                    if "duplicate column name" not in str(err).lower():
+                        raise
 
     def _cleanup_history_retention(self):
         """Keep only records from 2025 onward."""
