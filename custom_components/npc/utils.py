@@ -3,7 +3,7 @@ import sqlite3
 import os
 from datetime import datetime, timedelta
 from typing import Any, Optional
-from .const import DOMAIN
+from .const import DOMAIN, OUTAGE_STATUS_CANCELLED
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -364,6 +364,12 @@ def _trang_thai_hoan(value):
         return "Bị hoãn"
 
 
+def _trang_thai_lich_cat_dien(trang_thai, tthai_hoan):
+    if str(trang_thai or "").strip().lower() == OUTAGE_STATUS_CANCELLED:
+        return "Đã hủy"
+    return _trang_thai_hoan(tthai_hoan)
+
+
 def laylichcatdien(userevn):
     try:
         conn = get_db_conn()
@@ -372,7 +378,7 @@ def laylichcatdien(userevn):
             """
             SELECT ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau,
                    thoi_gian_ket_thuc, ly_do, khu_vuc,
-                   ten_phan_tu, tthai_hoan
+                   ten_phan_tu, tthai_hoan, trang_thai
             FROM power_outage_schedule
             WHERE userevn=?
             ORDER BY ngay_bat_dau DESC
@@ -392,7 +398,7 @@ def laylichcatdien(userevn):
                     "Khu vực": str(row[5]),
                     "Địa chỉ": str(row[6]) if row[6] is not None else "",
                     "TTHAI_HOAN": str(row[7]) if row[7] is not None else "",
-                    "Trạng thái": _trang_thai_hoan(row[7])
+                    "Trạng thái": _trang_thai_lich_cat_dien(row[8], row[7])
                 })
         return result
     except Exception:

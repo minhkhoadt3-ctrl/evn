@@ -11,7 +11,7 @@ import random
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from .npc_api import EVNAPI
-from .const import SCAN_INTERVAL, DOMAIN, API_CALL_DELAY_MIN, API_CALL_DELAY_MAX, API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX
+from .const import SCAN_INTERVAL, DOMAIN, API_CALL_DELAY_MIN, API_CALL_DELAY_MAX, API_LOOP_DELAY_MIN, API_LOOP_DELAY_MAX, OUTAGE_EMPTY_RESPONSE_THRESHOLD, OUTAGE_STATUS_ACTIVE, OUTAGE_STATUS_CANCELLED
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         self.customer_id = customer_id
         self.ngaydauky = ngaydauky
         self.data: Dict[str, Any] = {}
+        self._consecutive_empty_outage_responses = 0
         # Dynamic DB path
         self.db_path = hass.config.path("evnvn", "evndata.db")
 
@@ -368,13 +369,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 userevn TEXT, ngay_bat_dau TEXT, ngay_ket_thuc TEXT,
                 thoi_gian_bat_dau TEXT, thoi_gian_ket_thuc TEXT,
                 ly_do TEXT, khu_vuc TEXT,
-                ten_phan_tu TEXT, tthai_hoan TEXT,
+                ten_phan_tu TEXT, tthai_hoan TEXT, trang_thai TEXT,
                 PRIMARY KEY (userevn, ngay_bat_dau, thoi_gian_bat_dau)
             )
         """)
         cursor.execute("PRAGMA table_info(power_outage_schedule)")
         existing_columns = {row[1] for row in cursor.fetchall()}
-        for column in ("ten_phan_tu", "tthai_hoan"):
+        for column in ("ten_phan_tu", "tthai_hoan", "trang_thai"):
             if column not in existing_columns:
                 cursor.execute(
                     f"ALTER TABLE power_outage_schedule ADD COLUMN {column} TEXT"
@@ -907,6 +908,23 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error(f"Error saving hóa đơn to monthly_bill: {e}", exc_info=True)
 
+    def _purge_expired_cancelled_outages(self, cursor):
+        """Remove cancelled outage records whose scheduled end date has passed."""
+        today_iso = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute(
+            """
+            DELETE FROM power_outage_schedule
+            WHERE userevn = ?
+              AND trang_thai = ?
+              AND (
+                  substr(ngay_ket_thuc, 7, 4) || '-' ||
+                  substr(ngay_ket_thuc, 4, 2) || '-' ||
+                  substr(ngay_ket_thuc, 1, 2)
+              ) < ?
+            """,
+            (self.customer_id, OUTAGE_STATUS_CANCELLED, today_iso),
+        )
+
     async def _save_outage_data(self, data: list):
         """Save a normalized outage snapshot without losing valid cached data."""
         if not isinstance(data, list):
@@ -918,6 +936,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             self._ensure_outage_schedule_schema(cursor)
+            self._purge_expired_cancelled_outages(cursor)
 
             def first_present(*values):
                 for value in values:
@@ -1008,7 +1027,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 row = (
                     start_date, end_date or start_date, str(start_time or ""),
                     str(end_time or ""), str(reason), str(area),
-                    str(ten_phan_tu), str(tthai_hoan)
+                    str(ten_phan_tu), str(tthai_hoan), OUTAGE_STATUS_ACTIVE
                 )
                 normalized[(row[0], row[2])] = row
 
@@ -1024,21 +1043,56 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
             cursor.execute(
                 "SELECT ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau, "
-                "thoi_gian_ket_thuc, ly_do, khu_vuc, ten_phan_tu, tthai_hoan "
-                "FROM power_outage_schedule WHERE userevn = ?",
+                "thoi_gian_ket_thuc, ly_do, khu_vuc, ten_phan_tu, tthai_hoan, "
+                "trang_thai FROM power_outage_schedule WHERE userevn = ?",
                 (self.customer_id,),
             )
             old_rows = set(cursor.fetchall())
             new_rows = set(normalized.values())
 
-            if not new_rows and old_rows:
-                _LOGGER.warning(
-                    "Outage API returned an empty schedule for %s; retaining %d cached records",
-                    self.customer_id, len(old_rows),
-                )
+            if not new_rows:
+                self._consecutive_empty_outage_responses += 1
+                empty_count = self._consecutive_empty_outage_responses
+                if old_rows and empty_count < OUTAGE_EMPTY_RESPONSE_THRESHOLD:
+                    _LOGGER.warning(
+                        "Outage API returned an empty schedule for %s (%d/%d); "
+                        "retaining %d cached records",
+                        self.customer_id, empty_count,
+                        OUTAGE_EMPTY_RESPONSE_THRESHOLD, len(old_rows),
+                    )
+                    conn.close()
+                    return
+                if old_rows:
+                    cursor.execute(
+                        """
+                        UPDATE power_outage_schedule
+                        SET trang_thai = ?
+                        WHERE userevn = ?
+                          AND (trang_thai IS NULL OR trang_thai != ?)
+                        """,
+                        (
+                            OUTAGE_STATUS_CANCELLED,
+                            self.customer_id,
+                            OUTAGE_STATUS_CANCELLED,
+                        ),
+                    )
+                    if cursor.rowcount:
+                        _LOGGER.warning(
+                            "Outage API returned an empty schedule for %s %d consecutive "
+                            "times; marking %d cached records as cancelled",
+                            self.customer_id, empty_count, cursor.rowcount,
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Outage schedule for %s is already marked as cancelled",
+                            self.customer_id,
+                        )
+                    conn.commit()
+                self._consecutive_empty_outage_responses = 0
                 conn.close()
                 return
 
+            self._consecutive_empty_outage_responses = 0
             if old_rows == new_rows:
                 _LOGGER.debug("Outage schedule unchanged for %s", self.customer_id)
                 conn.close()
@@ -1052,8 +1106,9 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 """
                 INSERT OR REPLACE INTO power_outage_schedule
                 (userevn, ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau,
-                 thoi_gian_ket_thuc, ly_do, khu_vuc, ten_phan_tu, tthai_hoan)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 thoi_gian_ket_thuc, ly_do, khu_vuc, ten_phan_tu, tthai_hoan,
+                 trang_thai)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (self.customer_id, *row)

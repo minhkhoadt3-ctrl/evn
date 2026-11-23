@@ -20,6 +20,11 @@ DB_PATH = "/config/evnvn/evndata.db"
 # Scan interval
 SCAN_INTERVAL = 600  # 10 minutes
 
+# Mark cached outage records as cancelled after this many consecutive empty API responses
+OUTAGE_EMPTY_RESPONSE_THRESHOLD = 3
+OUTAGE_STATUS_ACTIVE = "active"
+OUTAGE_STATUS_CANCELLED = "cancelled"
+
 # API call delays (in seconds)
 API_CALL_DELAY_MIN = 1.0  # Minimum delay between different API calls
 API_CALL_DELAY_MAX = 2.0  # Maximum delay between different API calls
