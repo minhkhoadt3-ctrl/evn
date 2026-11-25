@@ -16,6 +16,33 @@ from .const import SCAN_INTERVAL, DOMAIN, API_CALL_DELAY_MIN, API_CALL_DELAY_MAX
 _LOGGER = logging.getLogger(__name__)
 
 
+def _extract_outage_records(payload):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        return payload["data"]
+    return None
+
+
+def _outage_record_start(record):
+    if not isinstance(record, dict):
+        return None
+    for key in (
+        "NGAY_BAT_DAU", "ngay_bat_dau", "NGAY", "ngay",
+        "TGIAN_BDAU", "tgian_bdau", "THOI_DIEM", "thoi_diem",
+    ):
+        value = record.get(key)
+        if not value:
+            continue
+        text = str(value).strip().split()[0]
+        for date_format in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, date_format)
+            except ValueError:
+                continue
+    return None
+
+
 class EVNDataUpdateCoordinator(DataUpdateCoordinator):
     """Coordinator for EVN data updates."""
 
@@ -51,7 +78,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # This must not be blocked by the much heavier historical sync below.
             today = datetime.now()
             outage_from = today.strftime("%d/%m/%Y")
-            outage_to = (today + timedelta(days=30)).strftime("%d/%m/%Y")
+            outage_to = (today + timedelta(days=14)).strftime("%d/%m/%Y")
             try:
                 _LOGGER.info(
                     f"Fetching power outage schedule for {self.customer_id}: "
@@ -60,12 +87,38 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 outage_data = await self.api.get_ngungcapdien(outage_from, outage_to)
                 # The API client normally wraps records in {"data": [...]}; accept
                 # a raw list as well so a regional API response is not discarded.
-                if isinstance(outage_data, list):
-                    outage_records = outage_data
-                elif isinstance(outage_data, dict) and isinstance(outage_data.get("data"), list):
-                    outage_records = outage_data["data"]
-                else:
-                    outage_records = None
+                outage_records = _extract_outage_records(outage_data)
+
+                # EVN sometimes returns an empty list for the primary window
+                # while the same schedule is still returned for a wider range.
+                # Confirm empty responses with a longer range before treating
+                # them as a real cancellation. Confirmed records are still
+                # filtered back to the 14-day window before saving.
+                if outage_records == []:
+                    outage_confirm_to = (today + timedelta(days=28)).strftime("%d/%m/%Y")
+                    outage_confirm_data = await self.api.get_ngungcapdien(
+                        outage_from, outage_confirm_to
+                    )
+                    outage_confirm_records = _extract_outage_records(outage_confirm_data)
+                    if outage_confirm_records:
+                        primary_to_date = today + timedelta(days=14)
+                        confirmed_records = []
+                        for record in outage_confirm_records:
+                            record_start = _outage_record_start(record)
+                            if record_start is None or record_start.date() <= primary_to_date.date():
+                                confirmed_records.append(record)
+                        if confirmed_records:
+                            outage_records = confirmed_records
+                            _LOGGER.info(
+                                "Outage API returned empty for %s but %d records "
+                                "for extended range %s; using confirmed records",
+                                outage_to, len(confirmed_records), outage_confirm_to,
+                            )
+                    elif outage_confirm_records is None:
+                        # Confirmation request failed; keep cached data without
+                        # counting this as a confirmed empty response.
+                        outage_records = None
+                        outage_data = None
 
                 if outage_records is not None:
                     await self._save_outage_data(outage_records)
@@ -1101,6 +1154,17 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Outage schedule unchanged for %s", self.customer_id)
                 conn.close()
                 return
+
+            reactivated = sum(
+                1 for row in old_rows
+                if len(row) > 8 and row[8] == OUTAGE_STATUS_CANCELLED
+            )
+            if reactivated:
+                _LOGGER.warning(
+                    "Outage API returned schedules again for %s; reactivating "
+                    "%d previously cancelled records",
+                    self.customer_id, reactivated,
+                )
 
             cursor.execute(
                 "DELETE FROM power_outage_schedule WHERE userevn = ?",
